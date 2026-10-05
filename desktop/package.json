@@ -1,0 +1,50 @@
+{
+  "name": "gbt-potato-v9-desktop",
+  "productName": "GBT小土豆V9",
+  "version": "0.11.0",
+  "description": "GBT小土豆V9 桌面端 —— 以开源项目 Octop（便携底座）为基础结构：壳只负责拉起 Octop、健康检查并加载其仪表盘",
+  "main": "main.js",
+  "private": true,
+  "author": "GBT小土豆V9",
+  "license": "SEE LICENSE IN resources/octop/portable/packages/octop/LICENSE",
+  "build": {
+    "appId": "com.gbt.potato.v9",
+    "productName": "GBT小土豆V9",
+    "electronVersion": "43.3.0",
+    "directories": {
+      "output": "release"
+    },
+    "files": [
+      "main.js",
+      "splash.html",
+      "package.json",
+      "icon.ico"
+    ],
+    "extraResources": [
+      {
+        "from": "resources/octop",
+        "to": "octop"
+      },
+      {
+        "from": "resources/octop-seed",
+        "to": "octop-seed"
+      }
+    ],
+    "win": {
+      "icon": "icon.ico",
+      "target": [
+        {
+          "target": "nsis",
+          "arch": ["x64"]
+        }
+      ]
+    },
+    "nsis": {
+      "oneClick": true,
+      "perMachine": false,
+      "deleteAppDataOnUninstall": false,
+      "artifactName": "GBT小土豆V9-Octop-${version}.${ext}",
+      "shortcutName": "GBT小土豆V9"
+    }
+  }
+}

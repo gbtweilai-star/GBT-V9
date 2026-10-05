@@ -1,0 +1,611 @@
+{
+ "generated_at": "2026-10-06 02:32:56",
+ "manifest": "C:\\Users\\ADMIN\\gbt-potato-v9\\native-capabilities\\octop.offline.manifest.json",
+ "capabilities": 53,
+ "probe_pass": "53/53",
+ "operations_pass": "12/12",
+ "acceptance_pass": "45/45",
+ "all_pass": true,
+ "workdir": "C:\\Users\\ADMIN\\AppData\\Local\\Temp\\v9-accept-ta3ay0p5",
+ "ledger_rows": {
+  "workflow_runs": 1,
+  "agent_runs": 3,
+  "cross_scan_results": 3,
+  "scan_coverage": 1,
+  "web_scrape_runs": 1,
+  "voice_events": 1,
+  "media_job_events": 4,
+  "native_artifacts": 6
+ },
+ "failures": [],
+ "results": [
+  {
+   "capability": "brain.intent_split",
+   "kind": "native_probe",
+   "pass": true,
+   "detail": "rule-splitter ready"
+  },
+  {
+   "capability": "brain.llm_retry",
+   "kind": "native_probe",
+   "pass": true,
+   "detail": "scripted retry path"
+  },
+  {
+   "capability": "brain.route_laya",
+   "kind": "native_probe",
+   "pass": true,
+   "detail": "rule router"
+  },
+  {
+   "capability": "brain.reflect_loop",
+   "kind": "native_probe",
+   "pass": true,
+   "detail": "bounded loop"
+  },
+  {
+   "capability": "brain.prompt_factory",
+   "kind": "native_probe",
+   "pass": true,
+   "detail": "template ok"
+  },
+  {
+   "capability": "brain.report_up",
+   "kind": "native_probe",
+   "pass": true,
+   "detail": "report ok"
+  },
+  {
+   "capability": "brain.memory_view",
+   "kind": "native_probe",
+   "pass": true,
+   "detail": "namespaced view"
+  },
+  {
+   "capability": "tentacle.contract",
+   "kind": "native_probe",
+   "pass": true,
+   "detail": "validator ok"
+  },
+  {
+   "capability": "tentacle.hook_filter",
+   "kind": "native_probe",
+   "pass": true,
+   "detail": "region filter"
+  },
+  {
+   "capability": "tentacle.per_llm",
+   "kind": "native_probe",
+   "pass": true,
+   "detail": "rpm bucket"
+  },
+  {
+   "capability": "tentacle.unbounded",
+   "kind": "native_probe",
+   "pass": true,
+   "detail": "registry growth"
+  },
+  {
+   "capability": "tentacle.inherit_all",
+   "kind": "native_probe",
+   "pass": true,
+   "detail": "inherit ok"
+  },
+  {
+   "capability": "tentacle.identity",
+   "kind": "native_probe",
+   "pass": true,
+   "detail": "identity ok"
+  },
+  {
+   "capability": "scan.full_sweep",
+   "kind": "native_probe",
+   "pass": true,
+   "detail": "op-backed: scan.full_sweep_probe"
+  },
+  {
+   "capability": "scan.cross_review",
+   "kind": "native_probe",
+   "pass": true,
+   "detail": "op-backed: scan.cross_review"
+  },
+  {
+   "capability": "scan.vuln_rules",
+   "kind": "native_probe",
+   "pass": true,
+   "detail": "rules ok"
+  },
+  {
+   "capability": "scan.coverage_report",
+   "kind": "native_probe",
+   "pass": true,
+   "detail": "recon ok"
+  },
+  {
+   "capability": "devour.zero_drop",
+   "kind": "native_probe",
+   "pass": true,
+   "detail": "drop counter"
+  },
+  {
+   "capability": "devour.print_restore",
+   "kind": "native_probe",
+   "pass": true,
+   "detail": "op-backed: devour.print_restore_probe"
+  },
+  {
+   "capability": "devour.segment_pack",
+   "kind": "native_probe",
+   "pass": true,
+   "detail": "pack ok"
+  },
+  {
+   "capability": "devour.r2_watermark",
+   "kind": "native_probe",
+   "pass": true,
+   "detail": "watermark plan"
+  },
+  {
+   "capability": "devour.playback",
+   "kind": "native_probe",
+   "pass": true,
+   "detail": "index lookup"
+  },
+  {
+   "capability": "devour.cache_reclaim",
+   "kind": "native_probe",
+   "pass": true,
+   "detail": "budget reclaim"
+  },
+  {
+   "capability": "devour.gap_alert",
+   "kind": "native_probe",
+   "pass": true,
+   "detail": "gap alert"
+  },
+  {
+   "capability": "devour.gap_compensate",
+   "kind": "native_probe",
+   "pass": true,
+   "detail": "repair plan"
+  },
+  {
+   "capability": "devour.comp_drawer",
+   "kind": "native_probe",
+   "pass": true,
+   "detail": "drawer rows"
+  },
+  {
+   "capability": "voice.mic_stream",
+   "kind": "native_probe",
+   "pass": true,
+   "detail": "synthetic stream"
+  },
+  {
+   "capability": "voice.keyword",
+   "kind": "native_probe",
+   "pass": true,
+   "detail": "keyword hit"
+  },
+  {
+   "capability": "voice.queue_dedupe",
+   "kind": "native_probe",
+   "pass": true,
+   "detail": "dedupe ok"
+  },
+  {
+   "capability": "voice.tts",
+   "kind": "native_probe",
+   "pass": true,
+   "detail": "ssml render"
+  },
+  {
+   "capability": "exec.coder",
+   "kind": "native_probe",
+   "pass": true,
+   "detail": "op-backed: coder.fake_fix_loop"
+  },
+  {
+   "capability": "exec.actuator",
+   "kind": "native_probe",
+   "pass": true,
+   "detail": "op-backed: actuator.fake_actions"
+  },
+  {
+   "capability": "exec.pulse",
+   "kind": "native_probe",
+   "pass": true,
+   "detail": "op-backed: pulse.fake_dispatch"
+  },
+  {
+   "capability": "flow.dag_engine",
+   "kind": "native_probe",
+   "pass": true,
+   "detail": "topo ok"
+  },
+  {
+   "capability": "flow.dag_editor",
+   "kind": "native_probe",
+   "pass": true,
+   "detail": "cycle detect"
+  },
+  {
+   "capability": "flow.risk_gate",
+   "kind": "native_probe",
+   "pass": true,
+   "detail": "gate ok"
+  },
+  {
+   "capability": "ledger.dual_backend",
+   "kind": "native_probe",
+   "pass": true,
+   "detail": "backend detect"
+  },
+  {
+   "capability": "ledger.pool_monitor",
+   "kind": "native_probe",
+   "pass": true,
+   "detail": "metrics ok"
+  },
+  {
+   "capability": "ledger.alerts",
+   "kind": "native_probe",
+   "pass": true,
+   "detail": "alert rule"
+  },
+  {
+   "capability": "ledger.auto_scale",
+   "kind": "native_probe",
+   "pass": true,
+   "detail": "growth math"
+  },
+  {
+   "capability": "ledger.thread_safe",
+   "kind": "native_probe",
+   "pass": true,
+   "detail": "locked writes"
+  },
+  {
+   "capability": "ledger.audit_gap",
+   "kind": "native_probe",
+   "pass": true,
+   "detail": "gap expectation"
+  },
+  {
+   "capability": "sched.queue_gpu",
+   "kind": "native_probe",
+   "pass": true,
+   "detail": "op-backed: scheduler.fake_gpu_queue"
+  },
+  {
+   "capability": "sched.monitor",
+   "kind": "native_probe",
+   "pass": true,
+   "detail": "queue snapshot"
+  },
+  {
+   "capability": "sched.failrate",
+   "kind": "native_probe",
+   "pass": true,
+   "detail": "failrate math"
+  },
+  {
+   "capability": "panel.overview",
+   "kind": "native_probe",
+   "pass": true,
+   "detail": "overview ok"
+  },
+  {
+   "capability": "panel.digital_human",
+   "kind": "native_probe",
+   "pass": true,
+   "detail": "dh state"
+  },
+  {
+   "capability": "panel.nav_stack",
+   "kind": "native_probe",
+   "pass": true,
+   "detail": "nav stack"
+  },
+  {
+   "capability": "panel.trends",
+   "kind": "native_probe",
+   "pass": true,
+   "detail": "bucket ok"
+  },
+  {
+   "capability": "auth.session_tristate",
+   "kind": "native_probe",
+   "pass": true,
+   "detail": "tristate ok"
+  },
+  {
+   "capability": "auth.user_isolated",
+   "kind": "native_probe",
+   "pass": true,
+   "detail": "isolated ws"
+  },
+  {
+   "capability": "auth.shared_key_isolated",
+   "kind": "native_probe",
+   "pass": true,
+   "detail": "key buckets"
+  },
+  {
+   "capability": "web.scrape",
+   "kind": "native_probe",
+   "pass": true,
+   "detail": "op-backed: web.scrape_fixture"
+  },
+  {
+   "capability": "brain.intent_split",
+   "kind": "ledger_row",
+   "pass": true,
+   "detail": "workflow_runs=1 (need >= 1)"
+  },
+  {
+   "capability": "brain.llm_retry",
+   "kind": "ledger_row",
+   "pass": true,
+   "detail": "agent_runs=3 (need >= 1)"
+  },
+  {
+   "capability": "brain.route_laya",
+   "kind": "ledger_row",
+   "pass": true,
+   "detail": "workflow_runs=1 (need >= 1)"
+  },
+  {
+   "capability": "brain.reflect_loop",
+   "kind": "ledger_row",
+   "pass": true,
+   "detail": "agent_runs=3 (need >= 1)"
+  },
+  {
+   "capability": "brain.prompt_factory",
+   "kind": "ledger_row",
+   "pass": true,
+   "detail": "agent_runs=3 (need >= 1)"
+  },
+  {
+   "capability": "brain.report_up",
+   "kind": "ledger_row",
+   "pass": true,
+   "detail": "media_job_events=4 (need >= 1)"
+  },
+  {
+   "capability": "brain.memory_view",
+   "kind": "ledger_row",
+   "pass": true,
+   "detail": "media_job_events=4 (need >= 1)"
+  },
+  {
+   "capability": "tentacle.contract",
+   "kind": "ledger_row",
+   "pass": true,
+   "detail": "cross_scan_results=3 (need >= 1)"
+  },
+  {
+   "capability": "tentacle.hook_filter",
+   "kind": "ledger_row",
+   "pass": true,
+   "detail": "web_scrape_runs=1 (need >= 1)"
+  },
+  {
+   "capability": "tentacle.per_llm",
+   "kind": "ledger_row",
+   "pass": true,
+   "detail": "agent_runs=3 (need >= 1)"
+  },
+  {
+   "capability": "tentacle.unbounded",
+   "kind": "ledger_row",
+   "pass": true,
+   "detail": "cross_scan_results=3 (need >= 1)"
+  },
+  {
+   "capability": "tentacle.inherit_all",
+   "kind": "ledger_row",
+   "pass": true,
+   "detail": "workflow_runs=1 (need >= 1)"
+  },
+  {
+   "capability": "scan.full_sweep",
+   "kind": "ledger_row",
+   "pass": true,
+   "detail": "scan_coverage=1 (need >= 1)"
+  },
+  {
+   "capability": "scan.cross_review",
+   "kind": "ledger_row",
+   "pass": true,
+   "detail": "cross_scan_results=3 (need >= 1)"
+  },
+  {
+   "capability": "scan.vuln_rules",
+   "kind": "ledger_row",
+   "pass": true,
+   "detail": "cross_scan_results=3 (need >= 1)"
+  },
+  {
+   "capability": "scan.coverage_report",
+   "kind": "ledger_row",
+   "pass": true,
+   "detail": "scan_coverage=1 (need >= 1)"
+  },
+  {
+   "capability": "devour.zero_drop",
+   "kind": "artifact",
+   "pass": true,
+   "detail": "C:\\Users\\ADMIN\\AppData\\Local\\Temp\\v9-accept-ta3ay0p5\\native-artifacts\\devour_synthetic_capture-index.json (564B)"
+  },
+  {
+   "capability": "devour.zero_drop",
+   "kind": "audit_gap",
+   "pass": true,
+   "detail": "gaps=1 (expect 1)"
+  },
+  {
+   "capability": "devour.print_restore",
+   "kind": "artifact",
+   "pass": true,
+   "detail": "C:\\Users\\ADMIN\\AppData\\Local\\Temp\\v9-accept-ta3ay0p5\\native-artifacts\\devour_print_restore_probe-restored.bin (1024B)"
+  },
+  {
+   "capability": "devour.segment_pack",
+   "kind": "artifact",
+   "pass": true,
+   "detail": "C:\\Users\\ADMIN\\AppData\\Local\\Temp\\v9-accept-ta3ay0p5\\native-artifacts\\devour_synthetic_capture-index.json (564B)"
+  },
+  {
+   "capability": "devour.r2_watermark",
+   "kind": "artifact",
+   "pass": true,
+   "detail": "C:\\Users\\ADMIN\\AppData\\Local\\Temp\\v9-accept-ta3ay0p5\\native-artifacts\\devour_synthetic_capture-index.json (564B)"
+  },
+  {
+   "capability": "devour.playback",
+   "kind": "artifact",
+   "pass": true,
+   "detail": "C:\\Users\\ADMIN\\AppData\\Local\\Temp\\v9-accept-ta3ay0p5\\native-artifacts\\devour_synthetic_capture-index.json (564B)"
+  },
+  {
+   "capability": "devour.gap_alert",
+   "kind": "audit_gap",
+   "pass": true,
+   "detail": "gaps=1 (expect 1)"
+  },
+  {
+   "capability": "devour.gap_compensate",
+   "kind": "audit_gap",
+   "pass": true,
+   "detail": "gaps=1 (expect 1)"
+  },
+  {
+   "capability": "voice.mic_stream",
+   "kind": "ledger_row",
+   "pass": true,
+   "detail": "voice_events=1 (need >= 1)"
+  },
+  {
+   "capability": "voice.keyword",
+   "kind": "ledger_row",
+   "pass": true,
+   "detail": "voice_events=1 (need >= 1)"
+  },
+  {
+   "capability": "voice.queue_dedupe",
+   "kind": "ledger_row",
+   "pass": true,
+   "detail": "voice_events=1 (need >= 1)"
+  },
+  {
+   "capability": "voice.tts",
+   "kind": "ledger_row",
+   "pass": true,
+   "detail": "voice_events=1 (need >= 1)"
+  },
+  {
+   "capability": "exec.coder",
+   "kind": "ledger_row",
+   "pass": true,
+   "detail": "agent_runs=3 (need >= 1)"
+  },
+  {
+   "capability": "exec.actuator",
+   "kind": "ledger_row",
+   "pass": true,
+   "detail": "agent_runs=3 (need >= 1)"
+  },
+  {
+   "capability": "exec.pulse",
+   "kind": "ledger_row",
+   "pass": true,
+   "detail": "agent_runs=3 (need >= 1)"
+  },
+  {
+   "capability": "flow.dag_engine",
+   "kind": "ledger_row",
+   "pass": true,
+   "detail": "workflow_runs=1 (need >= 1)"
+  },
+  {
+   "capability": "flow.risk_gate",
+   "kind": "ledger_row",
+   "pass": true,
+   "detail": "workflow_runs=1 (need >= 1)"
+  },
+  {
+   "capability": "ledger.dual_backend",
+   "kind": "ledger_row",
+   "pass": true,
+   "detail": "media_job_events=4 (need >= 1)"
+  },
+  {
+   "capability": "ledger.pool_monitor",
+   "kind": "api_response",
+   "pass": true,
+   "detail": "/api/monitor/db-health -> 200"
+  },
+  {
+   "capability": "ledger.alerts",
+   "kind": "api_response",
+   "pass": true,
+   "detail": "/api/monitor/db-health -> 200"
+  },
+  {
+   "capability": "ledger.thread_safe",
+   "kind": "ledger_row",
+   "pass": true,
+   "detail": "media_job_events=4 (need >= 1)"
+  },
+  {
+   "capability": "ledger.audit_gap",
+   "kind": "audit_gap",
+   "pass": true,
+   "detail": "gaps=1 (expect 1)"
+  },
+  {
+   "capability": "sched.queue_gpu",
+   "kind": "ledger_row",
+   "pass": true,
+   "detail": "media_job_events=4 (need >= 1)"
+  },
+  {
+   "capability": "sched.monitor",
+   "kind": "api_response",
+   "pass": true,
+   "detail": "/api/media/queue?limit=1 -> 200"
+  },
+  {
+   "capability": "sched.failrate",
+   "kind": "ledger_row",
+   "pass": true,
+   "detail": "media_job_events=4 (need >= 1)"
+  },
+  {
+   "capability": "panel.overview",
+   "kind": "api_response",
+   "pass": true,
+   "detail": "/api/monitor/db-health -> 200"
+  },
+  {
+   "capability": "auth.session_tristate",
+   "kind": "api_response",
+   "pass": true,
+   "detail": "/api/session -> 200"
+  },
+  {
+   "capability": "auth.user_isolated",
+   "kind": "api_response",
+   "pass": true,
+   "detail": "/api/session -> 200"
+  },
+  {
+   "capability": "web.scrape",
+   "kind": "ledger_row",
+   "pass": true,
+   "detail": "web_scrape_runs=1 (need >= 1)"
+  }
+ ]
+}

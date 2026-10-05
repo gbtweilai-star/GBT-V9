@@ -1,0 +1,46 @@
+<!-- panel/capability.html —— 能力总控面板 -->
+<!doctype html><html lang="zh"><head>
+<meta charset="utf-8"><title>GBT小土豆V9 · 能力面板</title>
+<style>
+:root{--pri:#39d0ff;--bg:#0b1020;--card:#131a30;--ok:#2ee6a8;--bad:#ff5470;--warn:#ffc857}
+body{margin:0;background:var(--bg);color:#e8eefc;font:14px/1.5 system-ui,"Microsoft YaHei"}
+h1{font-size:20px;padding:16px 24px;margin:0;border-bottom:1px solid #1e2745}
+.grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(240px,1fr));gap:14px;padding:20px}
+.card{background:var(--card);border:1px solid #1e2745;border-radius:12px;padding:14px;position:relative}
+.card b{color:var(--pri)} .dot{width:8px;height:8px;border-radius:50%;display:inline-block;margin-right:6px}
+.on{background:var(--ok)} .off{background:var(--bad)} .stale{background:var(--warn)}
+.m{color:#7f8db3;font-size:12px} .big{font-size:22px;font-weight:700}
+table{width:100%;border-collapse:collapse;margin:0 20px 30px;width:calc(100% - 40px)}
+td,th{padding:6px 10px;border-bottom:1px solid #1e2745;text-align:left;font-size:12px}
+</style></head><body>
+<h1>🥔 GBT小土豆V9 · 能力总控面板 <span class="m" id="ts"></span></h1>
+<p class="m" style="padding:0 24px" id="backends"></p>
+<div class="grid" id="grid"></div>
+<h1 style="font-size:16px">最近调用</h1>
+<table><thead><tr><th>时间</th><th>能力</th><th>结果</th><th>耗时</th><th>触手</th><th>错误</th></tr></thead>
+<tbody id="calls"></tbody></table>
+<script>
+const $=s=>document.querySelector(s);
+async function load(){
+  const o = await (await fetch('/api/capability/overview')).json();
+  $('#ts').textContent = new Date(o.generated_at*1000).toLocaleTimeString();
+  $('#backends').textContent = Object.entries(o.backends)
+    .map(([k,v])=>(v===true||v?.ok?"✅":"⚠️")+" "+k).join("   ");
+  $('#grid').innerHTML = Object.entries(o.capabilities).map(([name,meta])=>{
+    const h=o.health[meta.cls.split(':')[1]]||{ok:false,reason:'未探测'};
+    const s=o.stats[name.replace(/@.*/,'')]||{};
+    const cls = h.ok? (h.stale?'stale':'on') : 'off';
+    return `<div class="card"><span class="dot ${cls}"></span><b>${name}</b>
+      <div class="m">${meta.kind} · 后端 ${meta.backend||'内置'}</div>
+      <div class="big">${s.rate!=null?Math.round(s.rate*100)+'%':'—'}</div>
+      <div class="m">调用 ${s.calls??0} · 均耗 ${s.avg_ms??0}ms</div>
+      <div class="m">${h.ok?'可用':'不可用：'+(h.reason||'')}</div></div>`;
+  }).join('');
+  const c = await (await fetch('/api/capability/calls?limit=50')).json();
+  $('#calls').innerHTML = c.map(r=>`<tr>
+    <td>${new Date(r.ts*1000).toLocaleString()}</td><td>${r.skill}</td>
+    <td style="color:${r.ok?'var(--ok)':'var(--bad)'}">${r.ok?'成功':'失败'}</td>
+    <td>${r.ms}ms</td><td>${r.tentacle||''}</td><td class="m">${r.error||''}</td></tr>`).join('');
+}
+load(); setInterval(load, 10000);
+</script></body></html>

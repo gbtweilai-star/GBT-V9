@@ -1,0 +1,219 @@
+name: Nightly frame-evidence contracts
+
+on:
+  schedule:
+    - cron: "0 3 * * *"
+  workflow_dispatch:
+
+concurrency:
+  group: contracts-nightly-${{ github.ref }}
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  call-contracts:
+    uses: ./.github/workflows/contracts.yml
+    permissions:
+      contents: read
+    with:
+      coverage_threshold: "80"     # ★ 夜间卡 80%
+      enforce_coverage: true       # ★ 低于阈值让 job 失败
+    secrets:
+      coverage_db_url: ${{ secrets.COVERAGE_DB_URL }}   # 可选：持久库写快照
+
+  notify-on-failure:
+    needs: call-contracts
+    if: ${{ always() && needs.call-contracts.result == 'failure' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read
+      issues: write
+      actions: read
+    env:
+      ALERT_WEBHOOK_URL: ${{ secrets.ALERT_WEBHOOK_URL }}
+      NIGHTLY_ALERT_ASSIGNEE: ${{ vars.NIGHTLY_ALERT_ASSIGNEE }}
+
+    steps:
+      - name: Download this run's reports
+        if: always()
+        uses: actions/download-artifact@v4
+        continue-on-error: true
+        with:
+          pattern: "*"
+          merge-multiple: true
+          path: artifacts
+
+      - name: Extract failures, coverage and log tails
+        id: collect
+        if: always()
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+          import json
+          import os
+          import xml.etree.ElementTree as ET
+
+          root = Path("artifacts")
+          failures = []
+          parse_errors = []
+          reports = sorted(root.rglob("report.xml")) if root.exists() else []
+
+          for report in reports:
+              try:
+                  xml_root = ET.parse(report).getroot()
+                  for case in xml_root.iter("testcase"):
+                      if any(child.tag in {"failure", "error"} for child in case):
+                          classname = case.attrib.get("classname", "")
+                          name = case.attrib.get("name", "<unnamed>")
+                          test_name = f"{classname}::{name}" if classname else name
+                          failures.append(f"{report.parent.name}: {test_name}")
+              except (ET.ParseError, OSError) as exc:
+                  parse_errors.append(f"{report}: could not parse JUnit XML ({exc})")
+
+          if failures:
+              failure_text = "\n".join(failures)
+          elif reports:
+              failure_text = "JUnit reports found; no failing testcase names were extracted."
+          else:
+              failure_text = "No JUnit reports were downloaded."
+          if parse_errors:
+              failure_text += "\n" + "\n".join(parse_errors)
+          failure_text = failure_text[:8000]
+          if len(failure_text) >= 8000:
+              failure_text += "\n[truncated]"
+
+          coverage_lines = []
+          summaries = sorted(root.rglob("coverage_summary.json")) if root.exists() else []
+          for path in summaries:
+              try:
+                  data = json.loads(path.read_text(encoding="utf-8"))
+                  coverage_lines.append(
+                      f"- {data.get('backend', path.parent.name)}: "
+                      f"overall={data.get('overall_percent','unknown')}% "
+                      f"threshold={data.get('threshold','unknown')}% "
+                      f"passed={data.get('passed','unknown')}")
+              except (json.JSONDecodeError, OSError) as exc:
+                  coverage_lines.append(f"- {path.parent.name}: summary unreadable ({exc})")
+          coverage_text = "\n".join(coverage_lines) if coverage_lines else "No coverage summaries were downloaded."
+          coverage_text = coverage_text[:4000]
+          if len(coverage_text) >= 4000:
+              coverage_text += "\n[truncated]"
+
+          logs = sorted(root.rglob("pytest.log")) if root.exists() else []
+          sections = []
+          for path in logs:
+              try:
+                  lines = path.read_text(encoding="utf-8", errors="replace").splitlines()
+                  sections.append(f"### {path.parent.name}/pytest.log (last 80 lines)\n" +
+                                  "\n".join(lines[-80:]))
+              except OSError as exc:
+                  sections.append(f"### {path.parent.name}/pytest.log\nCould not read log: {exc}")
+          log_text = "\n\n".join(sections) if sections else "No pytest.log files were downloaded."
+          log_text = log_text[:40000]
+          if len(log_text) >= 40000:
+              log_text += "\n[log content truncated]"
+
+          Path("failures.txt").write_text(failure_text, encoding="utf-8")
+          Path("coverage.txt").write_text(coverage_text, encoding="utf-8")
+          Path("log_tail.txt").write_text(log_text, encoding="utf-8")
+
+          with open(os.environ["GITHUB_OUTPUT"], "a", encoding="utf-8") as output:
+              output.write(f"failure_count={len(failures)}\n")
+          PY
+
+      - name: Open or update failure issue with evidence
+        uses: actions/github-script@v7
+        env:
+          FAILURE_COUNT: ${{ steps.collect.outputs.failure_count }}
+        with:
+          script: |
+            const fs = require("fs");
+            const title = "Nightly frame-evidence contracts FAILED";
+            const runUrl = `${context.serverUrl}/${context.repo.owner}/${context.repo.repo}/actions/runs/${context.runId}`;
+            const configured = (process.env.NIGHTLY_ALERT_ASSIGNEE || "").trim();
+            const assignee = /^[A-Za-z0-9-]+$/.test(configured) ? configured : "";
+            const failureCount = process.env.FAILURE_COUNT || "0";
+            const readOr = (p, fb) => fs.existsSync(p) ? fs.readFileSync(p, "utf8") : fb;
+            const safeFence = t => t.replace(/```/g, "`\u200b``");
+
+            const failures = safeFence(readOr("failures.txt", "Failure list unavailable."));
+            const coverage = safeFence(readOr("coverage.txt", "Coverage summary unavailable."));
+            const logs = safeFence(readOr("log_tail.txt", "No pytest logs were downloaded."));
+            let body =
+              `${assignee ? `@${assignee} ` : ""}Nightly contract run failed: ${runUrl}\n\n` +
+              `Failing test count: ${failureCount}\n\n` +
+              `### Failing tests\n\`\`\`text\n${failures}\n\`\`\`\n\n` +
+              `### Coverage\n\`\`\`text\n${coverage}\n\`\`\`\n\n` +
+              `<details><summary>pytest.log tails (up to 80 lines per artifact)</summary>\n\n` +
+              `\`\`\`text\n${logs}\n\`\`\`\n\n</details>`;
+
+            const maxChars = 58000;
+            if (body.length > maxChars) {
+              body = body.slice(0, maxChars - 40) + "\n\n[Issue content truncated safely.]\n";
+            }
+
+            const issues = await github.paginate(github.rest.issues.listForRepo, {
+              owner: context.repo.owner, repo: context.repo.repo, state: "open", per_page: 100,
+            });
+            const existing = issues.find(i => !i.pull_request && i.title === title);
+
+            if (existing) {
+              await github.rest.issues.createComment({
+                owner: context.repo.owner, repo: context.repo.repo,
+                issue_number: existing.number, body,
+              });
+              core.info(`Added this run's evidence to issue #${existing.number}.`);
+            } else {
+              const payload = { owner: context.repo.owner, repo: context.repo.repo, title, body };
+              if (assignee) payload.assignees = [assignee];
+              const created = await github.rest.issues.create(payload);
+              core.info(`Created issue #${created.data.number}.`);
+            }
+
+      - name: Post optional webhook alert
+        if: ${{ env.ALERT_WEBHOOK_URL != '' }}
+        env:
+          FAILURE_COUNT: ${{ steps.collect.outputs.failure_count }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          payload="$(jq -n \
+            --arg text "Nightly frame-evidence contracts FAILED: ${FAILURE_COUNT:-0} failing tests. $RUN_URL" \
+            '{text: $text, content: $text}')"
+          curl --fail --silent --show-error \
+            -H "Content-Type: application/json" \
+            --data "$payload" \
+            "$ALERT_WEBHOOK_URL"
+
+  report-ok:
+    needs: call-contracts
+    if: ${{ needs.call-contracts.result == 'success' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
+      issues: write
+    steps:
+      - name: Close open failure issue
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const title = "Nightly frame-evidence contracts FAILED";
+            const issues = await github.paginate(github.rest.issues.listForRepo, {
+              owner: context.repo.owner, repo: context.repo.repo, state: "open", per_page: 100,
+            });
+            const existing = issues.find(i => !i.pull_request && i.title === title);
+            if (existing) {
+              const url = `${context.serverUrl}/${context.repo.owner}/${context.repo.repo}/actions/runs/${context.runId}`;
+              await github.rest.issues.createComment({
+                owner: context.repo.owner, repo: context.repo.repo,
+                issue_number: existing.number,
+                body: `Nightly contracts passed; closing this alert: ${url}`,
+              });
+              await github.rest.issues.update({
+                owner: context.repo.owner, repo: context.repo.repo,
+                issue_number: existing.number, state: "closed",
+              });
+            }

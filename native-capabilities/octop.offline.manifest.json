@@ -1,0 +1,254 @@
+{
+  "schema_version": 1,
+  "source_id": "octop",
+  "source_version": "UNPINNED_REVIEW_REQUIRED",
+  "allowed_operations": [
+    "actuator.fake_actions",
+    "coder.fake_fix_loop",
+    "devour.print_restore_probe",
+    "devour.synthetic_capture",
+    "ledger.roundtrip",
+    "pulse.fake_dispatch",
+    "scan.cross_review",
+    "scan.full_sweep_probe",
+    "scheduler.fake_gpu_queue",
+    "voice.synthetic_transcript",
+    "web.scrape_fixture",
+    "workflow.dag_dry_run"
+  ],
+  "capabilities": [
+
+    {"id":"brain.intent_split","native_skill":"brain.intent_split","profiles":["offline"],"required":true,"equivalence":"full",
+     "acceptance":[{"kind":"native_probe","native_skill":"brain.intent_split"},
+                   {"kind":"ledger_row","operation":"workflow.dag_dry_run","table":"workflow_runs","min_count":1}]},
+
+    {"id":"brain.llm_retry","native_skill":"brain.llm_retry","profiles":["offline"],"required":true,"equivalence":"partial",
+     "replacement_note":"仅用脚本化 FakeBrain 验证重试路径；不代表真实 LLM/API 重试已验收。",
+     "acceptance":[{"kind":"native_probe","native_skill":"brain.llm_retry"},
+                   {"kind":"ledger_row","operation":"coder.fake_fix_loop","table":"agent_runs","min_count":1}]},
+
+    {"id":"brain.route_laya","native_skill":"brain.route_laya","profiles":["offline"],"required":true,"equivalence":"full",
+     "acceptance":[{"kind":"native_probe","native_skill":"brain.route_laya"},
+                   {"kind":"ledger_row","operation":"workflow.dag_dry_run","table":"workflow_runs","min_count":1}]},
+
+    {"id":"brain.reflect_loop","native_skill":"brain.reflect_loop","profiles":["offline"],"required":true,"equivalence":"partial",
+     "replacement_note":"仅验证 FakeBrain 先错后对的反思推进路径，不验证真实模型表现。",
+     "acceptance":[{"kind":"native_probe","native_skill":"brain.reflect_loop"},
+                   {"kind":"ledger_row","operation":"coder.fake_fix_loop","table":"agent_runs","min_count":1}]},
+
+    {"id":"brain.prompt_factory","native_skill":"brain.prompt_factory","profiles":["offline"],"required":true,"equivalence":"full",
+     "acceptance":[{"kind":"native_probe","native_skill":"brain.prompt_factory"},
+                   {"kind":"ledger_row","operation":"coder.fake_fix_loop","table":"agent_runs","min_count":1}]},
+
+    {"id":"brain.report_up","native_skill":"brain.report_up","profiles":["offline"],"required":true,"equivalence":"full",
+     "acceptance":[{"kind":"native_probe","native_skill":"brain.report_up"},
+                   {"kind":"ledger_row","operation":"ledger.roundtrip","table":"media_job_events","min_count":1}]},
+
+    {"id":"brain.memory_view","native_skill":"brain.memory_view","profiles":["offline"],"required":true,"equivalence":"full",
+     "acceptance":[{"kind":"native_probe","native_skill":"brain.memory_view"},
+                   {"kind":"ledger_row","operation":"ledger.roundtrip","table":"media_job_events","min_count":1}]},
+
+    {"id":"tentacle.contract","native_skill":"tentacle.contract","profiles":["offline"],"required":true,"equivalence":"full",
+     "acceptance":[{"kind":"native_probe","native_skill":"tentacle.contract"},
+                   {"kind":"ledger_row","operation":"scan.cross_review","table":"cross_scan_results","min_count":1}]},
+
+    {"id":"tentacle.hook_filter","native_skill":"tentacle.hook_filter","profiles":["offline"],"required":true,"equivalence":"partial",
+     "replacement_note":"用本地抓取 fixture 验证过滤链路；不覆盖公网抓取。",
+     "acceptance":[{"kind":"native_probe","native_skill":"tentacle.hook_filter"},
+                   {"kind":"ledger_row","operation":"web.scrape_fixture","table":"web_scrape_runs","min_count":1}]},
+
+    {"id":"tentacle.per_llm","native_skill":"tentacle.per_llm","profiles":["offline"],"required":true,"equivalence":"partial",
+     "replacement_note":"只验证 FakeBrain 注入路径，不验证真实 LLM 配置或调用。",
+     "acceptance":[{"kind":"native_probe","native_skill":"tentacle.per_llm"},
+                   {"kind":"ledger_row","operation":"coder.fake_fix_loop","table":"agent_runs","min_count":1}]},
+
+    {"id":"tentacle.unbounded","native_skill":"tentacle.unbounded","profiles":["offline"],"required":true,"equivalence":"partial",
+     "replacement_note":"用有限两触手交叉扫描验证 mesh 连通；不声称验证无限规模。",
+     "acceptance":[{"kind":"native_probe","native_skill":"tentacle.unbounded"},
+                   {"kind":"ledger_row","operation":"scan.cross_review","table":"cross_scan_results","min_count":1}]},
+
+    {"id":"tentacle.inherit_all","native_skill":"tentacle.inherit_all","profiles":["offline"],"required":true,"equivalence":"full",
+     "acceptance":[{"kind":"native_probe","native_skill":"tentacle.inherit_all"},
+                   {"kind":"ledger_row","operation":"workflow.dag_dry_run","table":"workflow_runs","min_count":1}]},
+
+    {"id":"tentacle.identity","native_skill":"tentacle.identity","profiles":["offline"],"required":true,"equivalence":"full",
+     "acceptance":[{"kind":"native_probe","native_skill":"tentacle.identity"}]},
+
+    {"id":"scan.full_sweep","native_skill":"scan.full_sweep","profiles":["offline"],"required":true,"equivalence":"full",
+     "acceptance":[{"kind":"native_probe","native_skill":"scan.full_sweep"},
+                   {"kind":"ledger_row","operation":"scan.full_sweep_probe","table":"scan_coverage","min_count":1}]},
+
+    {"id":"scan.cross_review","native_skill":"scan.cross_review","profiles":["offline"],"required":true,"equivalence":"full",
+     "acceptance":[{"kind":"native_probe","native_skill":"scan.cross_review"},
+                   {"kind":"ledger_row","operation":"scan.cross_review","table":"cross_scan_results","min_count":1}]},
+
+    {"id":"scan.vuln_rules","native_skill":"scan.vuln_rules","profiles":["offline"],"required":true,"equivalence":"full",
+     "acceptance":[{"kind":"native_probe","native_skill":"scan.vuln_rules"},
+                   {"kind":"ledger_row","operation":"scan.full_sweep_probe","table":"cross_scan_results","min_count":1}]},
+
+    {"id":"scan.coverage_report","native_skill":"scan.coverage_report","profiles":["offline"],"required":true,"equivalence":"full",
+     "acceptance":[{"kind":"native_probe","native_skill":"scan.coverage_report"},
+                   {"kind":"ledger_row","operation":"scan.full_sweep_probe","table":"scan_coverage","min_count":1}]},
+
+    {"id":"devour.zero_drop","native_skill":"devour.zero_drop","profiles":["offline"],"required":true,"equivalence":"partial",
+     "replacement_note":"合成帧只验证本地采集与 gap 记账；不代表真实采集设备零丢帧。",
+     "acceptance":[{"kind":"native_probe","native_skill":"devour.zero_drop"},
+                   {"kind":"artifact","operation":"devour.synthetic_capture","min_bytes":1},
+                   {"kind":"audit_gap","operation":"devour.synthetic_capture","expected":1}]},
+
+    {"id":"devour.print_restore","native_skill":"devour.print_restore","profiles":["offline"],"required":true,"equivalence":"full",
+     "acceptance":[{"kind":"native_probe","native_skill":"devour.print_restore"},
+                   {"kind":"artifact","operation":"devour.print_restore_probe","min_bytes":1}]},
+
+    {"id":"devour.segment_pack","native_skill":"devour.segment_pack","profiles":["offline"],"required":true,"equivalence":"full",
+     "acceptance":[{"kind":"native_probe","native_skill":"devour.segment_pack"},
+                   {"kind":"artifact","operation":"devour.synthetic_capture","min_bytes":1}]},
+
+    {"id":"devour.r2_watermark","native_skill":"devour.r2_watermark","profiles":["offline"],"required":true,"equivalence":"partial",
+     "replacement_note":"只验证本地合成帧段与归档前产物；R2 水位触发及上传必须在 full 验收。",
+     "acceptance":[{"kind":"native_probe","native_skill":"devour.r2_watermark"},
+                   {"kind":"artifact","operation":"devour.synthetic_capture","min_bytes":1}]},
+
+    {"id":"devour.playback","native_skill":"devour.playback","profiles":["offline"],"required":true,"equivalence":"partial",
+     "replacement_note":"offline 仅有本地产物读回；端到端回放拼接需真实回放 operation。",
+     "acceptance":[{"kind":"native_probe","native_skill":"devour.playback"},
+                   {"kind":"artifact","operation":"devour.synthetic_capture","min_bytes":1}]},
+
+    {"id":"devour.cache_reclaim","native_skill":"devour.cache_reclaim","profiles":["offline"],"required":true,"equivalence":"full",
+     "acceptance":[{"kind":"native_probe","native_skill":"devour.cache_reclaim"}]},
+
+    {"id":"devour.gap_alert","native_skill":"devour.gap_alert","profiles":["offline"],"required":true,"equivalence":"partial",
+     "replacement_note":"只验合成 gap 的账本读数；语音播报和告警投递不在 offline 范围。",
+     "acceptance":[{"kind":"native_probe","native_skill":"devour.gap_alert"},
+                   {"kind":"audit_gap","operation":"devour.synthetic_capture","expected":1}]},
+
+    {"id":"devour.gap_compensate","native_skill":"devour.gap_compensate","profiles":["offline"],"required":true,"equivalence":"partial",
+     "replacement_note":"只验合成 gap 记录；真实补偿帧与补偿成功率需专用 operation。",
+     "acceptance":[{"kind":"native_probe","native_skill":"devour.gap_compensate"},
+                   {"kind":"audit_gap","operation":"devour.synthetic_capture","expected":1}]},
+
+    {"id":"devour.comp_drawer","native_skill":"devour.comp_drawer","profiles":["offline"],"required":true,"equivalence":"partial",
+     "replacement_note":"没有专用抽屉 API operation；此项只验原生能力 probe，不代表 UI 端到端验收。",
+     "acceptance":[{"kind":"native_probe","native_skill":"devour.comp_drawer"}]},
+
+    {"id":"voice.mic_stream","native_skill":"voice.mic_stream","profiles":["offline"],"required":true,"equivalence":"partial",
+     "replacement_note":"用合成转写段替代麦克风采集；真实设备采集需 full 验收。",
+     "acceptance":[{"kind":"native_probe","native_skill":"voice.mic_stream"},
+                   {"kind":"ledger_row","operation":"voice.synthetic_transcript","table":"voice_events","min_count":1}]},
+
+    {"id":"voice.keyword","native_skill":"voice.keyword","profiles":["offline"],"required":true,"equivalence":"full",
+     "acceptance":[{"kind":"native_probe","native_skill":"voice.keyword"},
+                   {"kind":"ledger_row","operation":"voice.synthetic_transcript","table":"voice_events","min_count":1}]},
+
+    {"id":"voice.queue_dedupe","native_skill":"voice.queue_dedupe","profiles":["offline"],"required":true,"equivalence":"full",
+     "acceptance":[{"kind":"native_probe","native_skill":"voice.queue_dedupe"},
+                   {"kind":"ledger_row","operation":"voice.synthetic_transcript","table":"voice_events","min_count":1}]},
+
+    {"id":"voice.tts","native_skill":"voice.tts","profiles":["offline"],"required":true,"equivalence":"partial",
+     "replacement_note":"offline 不验证真实语音合成；FakeTTS 字节验收需专用 operation。",
+     "acceptance":[{"kind":"native_probe","native_skill":"voice.tts"},
+                   {"kind":"ledger_row","operation":"voice.synthetic_transcript","table":"voice_events","min_count":1}]},
+
+    {"id":"exec.coder","native_skill":"exec.coder","profiles":["offline"],"required":true,"equivalence":"partial",
+     "replacement_note":"FakeBrain 先错后对；不代表真实 LLM 编码能力。",
+     "acceptance":[{"kind":"native_probe","native_skill":"exec.coder"},
+                   {"kind":"ledger_row","operation":"coder.fake_fix_loop","table":"agent_runs","min_count":1}]},
+
+    {"id":"exec.actuator","native_skill":"exec.actuator","profiles":["offline"],"required":true,"equivalence":"partial",
+     "replacement_note":"FakePyAutoGUI 只验证记录动作，不操作真实桌面。",
+     "acceptance":[{"kind":"native_probe","native_skill":"exec.actuator"},
+                   {"kind":"ledger_row","operation":"actuator.fake_actions","table":"agent_runs","min_count":1}]},
+
+    {"id":"exec.pulse","native_skill":"exec.pulse","profiles":["offline"],"required":true,"equivalence":"partial",
+     "replacement_note":"Fake 执行端验证 dispatch 记账，不覆盖真实外部设备。",
+     "acceptance":[{"kind":"native_probe","native_skill":"exec.pulse"},
+                   {"kind":"ledger_row","operation":"pulse.fake_dispatch","table":"agent_runs","min_count":1}]},
+
+    {"id":"flow.dag_engine","native_skill":"flow.dag_engine","profiles":["offline"],"required":true,"equivalence":"full",
+     "acceptance":[{"kind":"native_probe","native_skill":"flow.dag_engine"},
+                   {"kind":"ledger_row","operation":"workflow.dag_dry_run","table":"workflow_runs","min_count":1}]},
+
+    {"id":"flow.dag_editor","native_skill":"flow.dag_editor","profiles":["offline"],"required":true,"equivalence":"partial",
+     "replacement_note":"没有专用面板编辑 API operation；offline 仅验原生 probe。",
+     "acceptance":[{"kind":"native_probe","native_skill":"flow.dag_editor"}]},
+
+    {"id":"flow.risk_gate","native_skill":"flow.risk_gate","profiles":["offline"],"required":true,"equivalence":"full",
+     "acceptance":[{"kind":"native_probe","native_skill":"flow.risk_gate"},
+                   {"kind":"ledger_row","operation":"workflow.dag_dry_run","table":"workflow_runs","min_count":1}]},
+
+    {"id":"ledger.dual_backend","native_skill":"ledger.dual_backend","profiles":["offline"],"required":true,"equivalence":"partial",
+     "replacement_note":"offline 只验 SQLite；PostgreSQL 并发与迁移在 full 验收。",
+     "acceptance":[{"kind":"native_probe","native_skill":"ledger.dual_backend"},
+                   {"kind":"ledger_row","operation":"ledger.roundtrip","table":"media_job_events","min_count":1}]},
+
+    {"id":"ledger.pool_monitor","native_skill":"ledger.pool_monitor","profiles":["offline"],"required":true,"equivalence":"partial",
+     "replacement_note":"SQLite 无 PG 池读数；仅验面板健康接口响应，PG 池监控需 full 验收。",
+     "acceptance":[{"kind":"native_probe","native_skill":"ledger.pool_monitor"},
+                   {"kind":"api_response","app":"panel","path":"/api/monitor/db-health","status":200}]},
+
+    {"id":"ledger.alerts","native_skill":"ledger.alerts","profiles":["offline"],"required":true,"equivalence":"partial",
+     "replacement_note":"offline 不验证 PG 池告警；此 HTTP 断言仅验健康接口可读。",
+     "acceptance":[{"kind":"native_probe","native_skill":"ledger.alerts"},
+                   {"kind":"api_response","app":"panel","path":"/api/monitor/db-health","status":200}]},
+
+    {"id":"ledger.auto_scale","native_skill":"ledger.auto_scale","profiles":["offline"],"required":true,"equivalence":"partial",
+     "replacement_note":"offline 不验证 PG 分区/扩容执行；只验原生 probe。",
+     "acceptance":[{"kind":"native_probe","native_skill":"ledger.auto_scale"}]},
+
+    {"id":"ledger.thread_safe","native_skill":"ledger.thread_safe","profiles":["offline"],"required":true,"equivalence":"partial",
+     "replacement_note":"offline 只验 SQLite 写入路径；PG 真并发写验收留给 full。",
+     "acceptance":[{"kind":"native_probe","native_skill":"ledger.thread_safe"},
+                   {"kind":"ledger_row","operation":"ledger.roundtrip","table":"media_job_events","min_count":1}]},
+
+    {"id":"ledger.audit_gap","native_skill":"ledger.audit_gap","profiles":["offline"],"required":true,"equivalence":"full",
+     "acceptance":[{"kind":"native_probe","native_skill":"ledger.audit_gap"},
+                   {"kind":"audit_gap","operation":"devour.synthetic_capture","expected":1}]},
+
+    {"id":"sched.queue_gpu","native_skill":"sched.queue_gpu","profiles":["offline"],"required":true,"equivalence":"partial",
+     "replacement_note":"Fake GPU mutex 验证队列路径；不代表真实 GPU/显存调度。",
+     "acceptance":[{"kind":"native_probe","native_skill":"sched.queue_gpu"},
+                   {"kind":"ledger_row","operation":"scheduler.fake_gpu_queue","table":"media_job_events","min_count":1}]},
+
+    {"id":"sched.monitor","native_skill":"sched.monitor","profiles":["offline"],"required":true,"equivalence":"partial",
+     "replacement_note":"offline 只验队列读取 API；显存指标由 fake 提供，不代表真实 GPU。",
+     "acceptance":[{"kind":"native_probe","native_skill":"sched.monitor"},
+                   {"kind":"api_response","app":"panel","path":"/api/media/queue?limit=1","status":200}]},
+
+    {"id":"sched.failrate","native_skill":"sched.failrate","profiles":["offline"],"required":true,"equivalence":"full",
+     "acceptance":[{"kind":"native_probe","native_skill":"sched.failrate"},
+                   {"kind":"ledger_row","operation":"scheduler.fake_gpu_queue","table":"media_job_events","min_count":1}]},
+
+    {"id":"panel.overview","native_skill":"panel.overview","profiles":["offline"],"required":true,"equivalence":"full",
+     "acceptance":[{"kind":"native_probe","native_skill":"panel.overview"},
+                   {"kind":"api_response","app":"panel","path":"/api/monitor/db-health","status":200}]},
+
+    {"id":"panel.digital_human","native_skill":"panel.digital_human","profiles":["offline"],"required":true,"equivalence":"partial",
+     "replacement_note":"offline 不验证数字人语音对讲链路；仅验原生 probe。",
+     "acceptance":[{"kind":"native_probe","native_skill":"panel.digital_human"}]},
+
+    {"id":"panel.nav_stack","native_skill":"panel.nav_stack","profiles":["offline"],"required":true,"equivalence":"partial",
+     "replacement_note":"没有浏览器端导航栈 acceptance operation；offline 仅验原生 probe。",
+     "acceptance":[{"kind":"native_probe","native_skill":"panel.nav_stack"}]},
+
+    {"id":"panel.trends","native_skill":"panel.trends","profiles":["offline"],"required":true,"equivalence":"partial",
+     "replacement_note":"没有趋势图专用 API/UI operation；offline 仅验原生 probe。",
+     "acceptance":[{"kind":"native_probe","native_skill":"panel.trends"}]},
+
+    {"id":"auth.session_tristate","native_skill":"auth.session_tristate","profiles":["offline"],"required":true,"equivalence":"full",
+     "acceptance":[{"kind":"native_probe","native_skill":"auth.session_tristate"},
+                   {"kind":"api_response","app":"panel","path":"/api/session","status":200,"json_equals":{"kind":"anonymous"}}]},
+
+    {"id":"auth.user_isolated","native_skill":"auth.user_isolated","profiles":["offline"],"required":true,"equivalence":"partial",
+     "replacement_note":"offline 不模拟真实多用户登录；仅验本地 session API 与原生 probe。",
+     "acceptance":[{"kind":"native_probe","native_skill":"auth.user_isolated"},
+                   {"kind":"api_response","app":"panel","path":"/api/session","status":200}]},
+
+    {"id":"auth.shared_key_isolated","native_skill":"auth.shared_key_isolated","profiles":["offline"],"required":true,"equivalence":"full",
+     "acceptance":[{"kind":"native_probe","native_skill":"auth.shared_key_isolated"}]},
+
+    {"id":"web.scrape","native_skill":"web.scrape","profiles":["offline"],"required":true,"equivalence":"partial",
+     "replacement_note":"只验 Scrapling HTTP 档与本地 fixture；browser/stealth 与公网抓取不在 offline 范围。",
+     "acceptance":[{"kind":"native_probe","native_skill":"web.scrape"},
+                   {"kind":"ledger_row","operation":"web.scrape_fixture","table":"web_scrape_runs","min_count":1}]}
+  ]
+}

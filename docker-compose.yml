@@ -1,0 +1,18 @@
+# ═══ CLIProxyAPI 网关（一套上游凭据，多把隔离钥匙）═══
+# 用法：docker compose up -d   →  http://127.0.0.1:8317
+# 说明：镜像/版本按上游仓库为准（router-for-me/CLIProxyAPI）；密钥只从 .env 读入。
+services:
+  cliproxyapi:
+    image: ${CLI_PROXY_IMAGE:-ghcr.io/router-for-me/cliproxyapi:latest}
+    container_name: gbt-v9-cliproxyapi
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:8317:8317"
+    volumes:
+      - ./config.yaml:/app/config.yaml:ro
+      - ./state/cli-proxy-auth:/root/.cli-proxy-api
+    env_file:
+      - .env
+    environment:
+      - TZ=Asia/Shanghai
+    command: ["-config", "/app/config.yaml"]

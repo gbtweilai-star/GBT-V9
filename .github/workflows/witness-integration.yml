@@ -1,0 +1,31 @@
+# .github/workflows/witness-integration.yml
+name: witness-integration
+on: { workflow_dispatch: {}, schedule: [{ cron: "0 3 * * 1" }] }   # 不挂在每个 PR 上
+jobs:
+  witness:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: pip install -r requirements-dev.txt      # boto3 + pytest
+      - name: run witness integration
+        env:
+          WITNESS_IT_REQUIRED: "1"                    # ★gate：缺凭据就 fail，不 skip
+          WITNESS_IT_REQUIRE_IMMUTABLE: "1"
+          WITNESS_IT_PREFIX: "_it/${{ github.run_id }}"
+          BODY_WITNESS_FP_KEY: ${{ secrets.WITNESS_FP_KEY }}
+          WITNESS_IT_R2_ENDPOINT: ${{ secrets.WITNESS_R2_ENDPOINT }}
+          WITNESS_IT_R2_REGION: auto
+          WITNESS_IT_R2_BUCKET: ${{ secrets.WITNESS_R2_TEST_BUCKET }}
+          WITNESS_IT_R2_ACCESS_KEY_ID: ${{ secrets.WITNESS_R2_ACCESS_KEY_ID }}
+          WITNESS_IT_R2_SECRET_ACCESS_KEY: ${{ secrets.WITNESS_R2_SECRET }}
+          WITNESS_IT_B2_ENDPOINT: ${{ secrets.WITNESS_B2_ENDPOINT }}
+          WITNESS_IT_B2_REGION: us-west-004
+          WITNESS_IT_B2_BUCKET: ${{ secrets.WITNESS_B2_TEST_BUCKET }}
+          WITNESS_IT_B2_ACCESS_KEY_ID: ${{ secrets.WITNESS_B2_KEY_ID }}
+          WITNESS_IT_B2_SECRET_ACCESS_KEY: ${{ secrets.WITNESS_B2_APP_KEY }}
+        run: pytest tests/integration -m integration -q --show-capture=no
+      - if: always()
+        uses: actions/upload-artifact@v4
+        with: { name: witness-it-report, path: |
+            witness_integration_status.json
+            **/caps_*.json }

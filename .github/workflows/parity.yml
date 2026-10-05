@@ -1,0 +1,240 @@
+name: Parity
+
+on:
+  pull_request:
+    branches: [main]
+  push:
+    branches: [main]
+  schedule:
+    - cron: "17 3 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: read            # 全局最小权限，提权只发生在 pr-comment
+
+concurrency:
+  group: parity-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: false # parity 会碰共享测试 bucket，禁止半路取消
+
+jobs:
+  # ─────────────────────────────────────────────
+  # ① PR：无密钥离线清单
+  # ─────────────────────────────────────────────
+  offline:
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+        with: { persist-credentials: false }
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -r requirements.txt
+
+      # 不配置任何 secrets；临时 SQLite 落在 PARITY_TEMP_ROOT 内(守卫要求)
+      - name: Run offline parity
+        id: parity
+        shell: bash
+        run: |
+          set +e
+          RUN_ID="${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
+          RUN_DIR="$GITHUB_WORKSPACE/parity-reports/$RUN_ID"
+          mkdir -p "$RUN_DIR/work"
+          export PARITY_PROFILE=offline
+          export PARITY_TEMP_ROOT="$RUN_DIR/work"
+          export PARITY_ALLOWED_DB_HOSTS=localhost
+          export PARITY_DATABASE_URL="sqlite:///$RUN_DIR/work/ledger.sqlite"
+
+          python -m parity.run \
+            --manifest parity/octop.offline.manifest.json \
+            --run-id "$RUN_ID" \
+            --commit-sha "$GITHUB_SHA" \
+            --out-dir parity-reports \
+            --timeout 900
+          rc=$?
+          echo "rc=$rc" >> "$GITHUB_OUTPUT"
+          exit 0                       # ← 绝不能在这里就失败
+
+      - name: Re-verify evidence SHA-256
+        id: verify
+        if: always()
+        shell: bash
+        run: |
+          set +e
+          RUN_ID="${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
+          python -m parity.verify_evidence \
+            --report "parity-reports/$RUN_ID/report.json"
+          echo "rc=$?" >> "$GITHUB_OUTPUT"
+          exit 0
+
+      - name: Job summary
+        if: always()
+        shell: bash
+        run: |
+          REPORT="parity-reports/${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}/report.md"
+          if [[ -f "$REPORT" ]]; then cat "$REPORT" >> "$GITHUB_STEP_SUMMARY"
+          else echo "Parity 报告未生成，请查看 Actions 日志。" >> "$GITHUB_STEP_SUMMARY"; fi
+
+      # ★必须 always()：parity 失败也要拿到报告和证据
+      - name: Upload parity report and evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: parity-offline-${{ github.run_id }}-${{ github.run_attempt }}
+          path: parity-reports/
+          if-no-files-found: warn
+          retention-days: 14
+
+      # ★失败延后到这里：上传完成后再按捕获码失败
+      - name: Enforce parity result
+        if: always()
+        env:
+          PARITY_RC: ${{ steps.parity.outputs.rc }}
+          VERIFY_RC: ${{ steps.verify.outputs.rc }}
+        run: |
+          echo "parity rc=${PARITY_RC:-missing} verify rc=${VERIFY_RC:-missing}"
+          [[ "${PARITY_RC:-9}" == "0" ]] || exit "${PARITY_RC:-9}"   # 0=过 1=对账失败 2=配置 3=内部 4=超时
+          [[ "${VERIFY_RC:-9}" == "0" ]] || exit 5                   # 5=证据校验失败
+
+  # ─────────────────────────────────────────────
+  # ② PR 评论：提权隔离，不 checkout、不跑 PR 代码，fork 直接跳过
+  # ─────────────────────────────────────────────
+  pr-comment:
+    needs: [offline]
+    if: >-
+      always() &&
+      github.event_name == 'pull_request' &&
+      github.event.pull_request.head.repo.full_name == github.repository
+    runs-on: ubuntu-latest
+    permissions:
+      pull-requests: write
+      actions: read
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: parity-offline-${{ github.run_id }}-${{ github.run_attempt }}
+          path: .
+
+      - uses: actions/github-script@v7
+        env:
+          REPORT: parity-reports/${{ github.run_id }}-${{ github.run_attempt }}/report.md
+        with:
+          script: |
+            const fs = require("fs");
+            const marker = "<!-- parity-report -->";
+            const p = process.env.REPORT;
+            const text = fs.existsSync(p)
+              ? fs.readFileSync(p, "utf8").slice(0, 60000)
+              : "Parity 报告未生成，请检查 Actions 日志。";
+            const body = `${marker}\n${text}`;
+            const { owner, repo } = context.repo;
+            const issue_number = context.issue.number;
+            const comments = await github.rest.issues.listComments({ owner, repo, issue_number });
+            const old = comments.data.find(c =>
+              c.user?.type === "Bot" && c.body?.includes(marker));
+            if (old) await github.rest.issues.updateComment({ owner, repo, comment_id: old.id, body });
+            else     await github.rest.issues.createComment({ owner, repo, issue_number, body });
+
+  # ─────────────────────────────────────────────
+  # ③ 完整验收：PG parity_ci + R2 测试 bucket
+  # ─────────────────────────────────────────────
+  full:
+    if: >-
+      (github.event_name == 'push' && github.ref == 'refs/heads/main') ||
+      github.event_name == 'schedule' ||
+      (github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main')
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: parity
+          POSTGRES_PASSWORD: parity
+          POSTGRES_DB: parity_ci        # ← 直接满足 parity_ 前缀守卫
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd "pg_isready -U parity -d parity_ci"
+          --health-interval 5s --health-timeout 5s --health-retries 20
+    steps:
+      - uses: actions/checkout@v4
+        with: { persist-credentials: false }
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -r requirements.txt
+
+      - name: Run full parity
+        id: parity
+        shell: bash
+        env:
+          PARITY_PROFILE: full
+          PARITY_DATABASE_URL: postgresql://parity:parity@localhost:5432/parity_ci
+          PARITY_ALLOWED_DB_HOSTS: localhost,127.0.0.1
+          PARITY_R2_ENDPOINT: ${{ secrets.PARITY_R2_ENDPOINT }}
+          PARITY_R2_BUCKET: ${{ secrets.PARITY_R2_BUCKET }}
+          PARITY_R2_ACCESS_KEY_ID: ${{ secrets.PARITY_R2_ACCESS_KEY_ID }}
+          PARITY_R2_SECRET_ACCESS_KEY: ${{ secrets.PARITY_R2_SECRET_ACCESS_KEY }}
+        run: |
+          set +e
+          RUN_ID="${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
+          mkdir -p "parity-reports/$RUN_ID/work"
+          python -m parity.run \
+            --manifest parity/octop.manifest.json \
+            --run-id "$RUN_ID" \
+            --commit-sha "$GITHUB_SHA" \
+            --out-dir parity-reports \
+            --timeout 2400
+          echo "rc=$?" >> "$GITHUB_OUTPUT"
+          exit 0
+
+      - name: Re-verify evidence SHA-256
+        id: verify
+        if: always()
+        shell: bash
+        run: |
+          set +e
+          python -m parity.verify_evidence \
+            --report "parity-reports/${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}/report.json"
+          echo "rc=$?" >> "$GITHUB_OUTPUT"
+          exit 0
+
+      - name: Job summary
+        if: always()
+        shell: bash
+        run: |
+          REPORT="parity-reports/${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}/report.md"
+          if [[ -f "$REPORT" ]]; then cat "$REPORT" >> "$GITHUB_STEP_SUMMARY"
+          else echo "Parity 报告未生成，请查看 Actions 日志。" >> "$GITHUB_STEP_SUMMARY"; fi
+
+      - name: Upload parity report and evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: parity-full-${{ github.run_id }}-${{ github.run_attempt }}
+          path: parity-reports/
+          if-no-files-found: warn
+          retention-days: 30
+
+      - name: Enforce parity result
+        if: always()
+        env:
+          PARITY_RC: ${{ steps.parity.outputs.rc }}
+          VERIFY_RC: ${{ steps.verify.outputs.rc }}
+        run: |
+          echo "parity rc=${PARITY_RC:-missing} verify rc=${VERIFY_RC:-missing}"
+          [[ "${PARITY_RC:-9}" == "0" ]] || exit "${PARITY_RC:-9}"
+          [[ "${VERIFY_RC:-9}" == "0" ]] || exit 5

@@ -1,0 +1,139 @@
+# .github/workflows/ci.yml —— push/PR 自动跑 SQLite 单测 + PG 集成测试
+# dev: 自由的风 · 本署名不可删除、不可篡改归属
+#
+# 与仓库实况对齐（2026-10-06 重写）:
+#   - SQLite 层 = pytest tests/（tests/legacy_spec/ 已在 tests/conftest.py 排除，
+#     那些是"对话目标态"测试，引用尚未落地的 API，保留作规格）
+#   - PG 层 = pytest tests/pg（tests/pg/conftest 自带就绪检测，库不可达整层 skip；
+#     这里用 GitHub 服务容器保证真库可用，skip 不会发生）
+#   - 契约测试的双后端参数由 PARITY_DATABASE_URL 解锁（本地未配 PG 时这 7 条 skip）
+#   - Python 3.12：与工程便携运行时（3.12.12）同代
+name: CI
+
+on:
+  push:
+    branches: [main, master, develop]
+  pull_request:
+    branches: [main, master, develop]
+  workflow_dispatch:
+
+# 同分支新推送取消旧跑，省额度
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  PYTHON_VERSION: "3.12"
+  PIP_DISABLE_PIP_VERSION_CHECK: "1"
+
+jobs:
+  # ═══════════════════════════════════════════════════════
+  # Job 1: SQLite 单测（离线，无服务依赖；测试一律不碰真实 PG）
+  # ═══════════════════════════════════════════════════════
+  unit:
+    name: SQLite 单测
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    env:
+      LEDGER_BACKEND: sqlite
+      DATABASE_URL: ""          # 双保险：单测绝不连任何真实 PG
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: 安装 Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+          cache: pip
+
+      - name: 安装 Python 依赖
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+          pip install pytest
+
+      - name: 语法编译检查
+        run: python -m compileall -q contract core senses scan audit panel tools skills actuator main.py
+
+      - name: 落盘自检（目录 26 件 / 语法 / 17 个关键导入）
+        run: python tools/selfcheck.py
+
+      - name: 运行 SQLite 单测
+        run: pytest tests/ -v
+
+  # ═══════════════════════════════════════════════════════
+  # Job 2: PostgreSQL 集成测试（真库 + 真并发 + SKIP LOCKED）
+  # ═══════════════════════════════════════════════════════
+  integration:
+    name: PG 集成测试
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: test
+          POSTGRES_PASSWORD: test
+          POSTGRES_DB: tentacle_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U test -d tentacle_test"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+
+    env:
+      TEST_DATABASE_URL: postgresql://test:test@127.0.0.1:5432/tentacle_test
+      PARITY_DATABASE_URL: postgresql://test:test@127.0.0.1:5432/tentacle_test
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: 安装 Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+          cache: pip
+
+      - name: 安装 Python 依赖
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+          pip install pytest
+
+      - name: 确认 Postgres 就绪（服务容器 healthcheck 的兜底）
+        run: |
+          for i in $(seq 1 30); do
+            pg_isready -h 127.0.0.1 -p 5432 -U test -d tentacle_test && exit 0
+            echo "等待 Postgres... ($i/30)"; sleep 2
+          done
+          echo "Postgres 未就绪"; exit 1
+
+      - name: 运行 PG 集成测试（账本/交叉复核/分区/增长/指标）
+        run: pytest tests/pg -v
+
+      - name: 契约测试·PG 参数组（本地未配 PG 时 skip 的用例在这里真跑）
+        run: pytest tests/contracts -v
+
+  # ═══════════════════════════════════════════════════════
+  # Job 3: 汇总门禁（两个 job 全绿才算绿）
+  # ═══════════════════════════════════════════════════════
+  ci-ok:
+    name: CI 汇总
+    runs-on: ubuntu-latest
+    needs: [unit, integration]
+    if: always()
+    steps:
+      - name: 检查上游结果
+        run: |
+          echo "unit=${{ needs.unit.result }}"
+          echo "integration=${{ needs.integration.result }}"
+          if [ "${{ needs.unit.result }}" != "success" ] \
+             || [ "${{ needs.integration.result }}" != "success" ]; then
+            echo "❌ CI 未全部通过"; exit 1
+          fi
+          echo "✅ CI 全绿"

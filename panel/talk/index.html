@@ -1,0 +1,114 @@
+<!-- panel/talk/index.html —— 数字人对讲页 -->
+<!doctype html><html lang="zh"><head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>GBT小土豆V9 · 数字人</title>
+<style>
+:root{--pri:#39d0ff;--bg:#080c18}
+body{margin:0;height:100vh;background:radial-gradient(circle at 50% 30%,#101a33,#080c18);
+     color:#e8eefc;font:15px/1.6 system-ui,"Microsoft YaHei";overflow:hidden}
+#stage{position:relative;height:72vh;display:flex;align-items:center;justify-content:center}
+#avatar{width:min(42vh,340px);border-radius:24px;transition:transform .25s,box-shadow .3s;
+        box-shadow:0 0 60px rgba(57,208,255,.25)}
+.speaking #avatar{transform:scale(1.03);box-shadow:0 0 90px rgba(57,208,255,.5)}
+#glow{position:absolute;width:min(48vh,400px);height:min(48vh,400px);border-radius:50%;
+      background:radial-gradient(circle,rgba(57,208,255,.28),transparent 70%);z-index:-1;
+      transition:opacity .2s}
+#mouth{position:absolute;left:50%;transform:translateX(-50%);bottom:31%;width:52px;height:6px;
+       border-radius:3px;background:#ff9bb0;opacity:.85;transition:height .08s}
+#state{position:absolute;top:18px;left:50%;transform:translateX(-50%);font-size:13px;color:#8fa3c8}
+#subs{height:24vh;padding:0 8vw;overflow-y:auto}
+.bub{max-width:70%;padding:10px 14px;border-radius:14px;margin:8px 0;white-space:pre-wrap}
+.user{background:#1b2440;margin-left:auto} .ai{background:#0f2b3a;border-left:3px solid var(--pri)}
+#bar{height:8vh;display:flex;gap:12px;align-items:center;justify-content:center}
+button{background:var(--pri);color:#04121c;border:0;border-radius:999px;padding:12px 26px;
+       font-weight:700;cursor:pointer} button.off{background:#2a3350;color:#c9d6f2}
+#meter{width:120px;height:6px;background:#1b2440;border-radius:3px;overflow:hidden}
+#meter>i{display:block;height:100%;width:0;background:var(--pri);transition:width .06s}
+</style></head><body>
+<div id="stage"><div id="glow"></div>
+  <img id="avatar" src="/talk/avatar.png" alt="GBT小土豆V9 数字人">
+  <div id="mouth"></div>
+  <div id="state">待机</div>
+</div>
+<div id="subs"></div>
+<div id="bar">
+  <button id="mic" class="off">🎙 开始对讲</button>
+  <div id="meter"><i></i></div>
+  <span style="font-size:12px;color:#7f8db3" id="hint">需在 localhost 或 HTTPS 下授权麦克风</span>
+</div>
+<script>
+const $=s=>document.querySelector(s);
+let ws, rec, stream, ac, analyser, raf, chunks=[], on=false;
+
+const STATE_TXT={idle:"待机",listening:"聆听中…",thinking:"思考中…",speaking:"说话中"};
+function setState(s){ document.body.className = s==="speaking"?"speaking":"";
+  $("#state").textContent = STATE_TXT[s]||s; }
+
+function bubble(who,text){
+  const d=document.createElement("div"); d.className="bub "+who;
+  d.textContent=(who==="ai"?"🥔 ":"你: ")+text;
+  $("#subs").appendChild(d); $("#subs").scrollTop=1e9;
+}
+
+function connect(){
+  ws = new WebSocket((location.protocol==="https:"?"wss":"ws")+"://"+location.host+"/ws/talk");
+  ws.onmessage = e=>{
+    const m=JSON.parse(e.data);
+    if(m.type==="state") setState(m.state);
+    if(m.type==="subtitle") bubble(m.who,m.text);
+    if(m.type==="speak"&&m.audio) play(m.audio);
+  };
+}
+
+// 音量驱动：麦克风时推动口型/发光；播放时也驱动
+function driveLevel(srcNode){
+  analyser = ac.createAnalyser(); analyser.fftSize=512;
+  srcNode.connect(analyser);
+  const buf=new Uint8Array(analyser.frequencyBinCount);
+  cancelAnimationFrame(raf);
+  (function tick(){
+    analyser.getByteTimeDomainData(buf);
+    let peak=0; for(const v of buf) peak=Math.max(peak,Math.abs(v-128)/128);
+    $("#meter>i").style.width=(peak*100)+"%";
+    $("#glow").style.opacity=.3+peak*.7;
+    $("#mouth").style.height=(3+peak*16)+"px";   // 简单口型：音量→张嘴
+    raf=requestAnimationFrame(tick);
+  })();
+}
+
+async function start(){
+  stream = await navigator.mediaDevices.getUserMedia({audio:{channelCount:1,sampleRate:16000}});
+  ac = new (window.AudioContext||window.webkitAudioContext)();
+  driveLevel(ac.createMediaStreamSource(stream));
+  const mime = MediaRecorder.isTypeSupported("audio/webm;codecs=opus")?"audio/webm;codecs=opus":"audio/webm";
+  rec = new MediaRecorder(stream,{mimeType:mime});
+  rec.ondataavailable = e=>{ if(e.data.size) chunks.push(e.data); };
+  rec.onstop = async ()=>{                            // 2.5s 一段，连续转写
+    const blob=new Blob(chunks,{type:mime}); chunks=[];
+    const b64=await blob.arrayBuffer().then(b=>btoa(String.fromCharCode(...new Uint8Array(b))));
+    if(ws&&ws.readyState===1) ws.send(JSON.stringify({type:"audio",data:b64}));
+  };
+  const loop=()=>{ if(!on)return; chunks=[]; rec.start();
+    setTimeout(()=>{ try{rec.stop()}catch(e){}; loop(); },2500); };
+  loop();
+  on=true; $("#mic").textContent="■ 结束对讲"; $("#mic").className="";
+}
+
+function stop(){
+  on=false; try{rec&&rec.stop()}catch(e){}
+  stream&&stream.getTracks().forEach(t=>t.stop());
+  cancelAnimationFrame(raf); $("#glow").style.opacity=.3;
+  $("#mic").textContent="🎙 开始对讲"; $("#mic").className="off"; setState("idle");
+}
+
+function play(b64){
+  const bytes=Uint8Array.from(atob(b64),c=>c.charCodeAt(0));
+  ac.decodeAudioData(bytes.buffer, buf=>{
+    const src=ac.createBufferSource(); src.buffer=buf; src.connect(ac.destination);
+    driveLevel(src); src.start(); src.onended=()=>setState("idle");
+  });
+}
+
+$("#mic").onclick=()=>{ if(!on){ connect(); start(); } else stop(); };
+connect();
+</script></body></html>

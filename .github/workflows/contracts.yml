@@ -1,0 +1,241 @@
+name: Frame-evidence contracts
+
+on:
+  workflow_call:
+    inputs:
+      coverage_threshold:
+        description: "覆盖率要求百分比；0 表示只告警。"
+        type: string
+        required: false
+        default: "0"
+      enforce_coverage:
+        description: "低于阈值时是否让 job 失败。"
+        type: boolean
+        required: false
+        default: false
+    secrets:
+      coverage_db_url:
+        required: false
+  push:
+  pull_request:
+  workflow_dispatch:
+
+concurrency:
+  group: contracts-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  sqlite-contracts:
+    name: SQLite / Python ${{ matrix.python-version }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ["3.10", "3.11", "3.12"]
+    env:
+      COVERAGE_THRESHOLD: ${{ inputs.coverage_threshold || '0' }}
+      ENFORCE_COVERAGE: ${{ inputs.enforce_coverage || false }}
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+          cache: pip
+          cache-dependency-path: |
+            requirements-dev.txt
+            pyproject.toml
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          if [ -f requirements-dev.txt ]; then
+            python -m pip install -r requirements-dev.txt
+          elif [ -f pyproject.toml ]; then
+            python -m pip install -e . || echo "::warning::Project install unavailable; installing contract dependencies."
+          fi
+          python -m pip install pytest pytest-asyncio pytest-cov coverage aiosqlite asyncpg
+
+      - name: Run SQLite contracts
+        run: |
+          unset DATABASE_URL RUN_PG_CONTRACTS TEST_DATABASE_URL
+          set -o pipefail
+          pytest tests/contracts -q \
+            --junitxml=report.xml \
+            --cov=body --cov=migrations --cov=panel --cov=skills \
+            --cov-report=term-missing \
+            --cov-report=json:coverage.json \
+            2>&1 | tee pytest.log
+
+      - name: Coverage report
+        if: always()
+        env:
+          COVERAGE_DB_URL: ${{ secrets.coverage_db_url }}
+        shell: bash
+        run: |
+          set +e
+          args=(
+            scripts/coverage_report.py
+            --coverage coverage.json
+            --backend sqlite
+            --out coverage_summary.json
+            --threshold "$COVERAGE_THRESHOLD"
+          )
+          if [[ -n "${COVERAGE_DB_URL:-}" ]]; then
+            args+=(--db "$COVERAGE_DB_URL")
+          fi
+          python "${args[@]}" 2>&1 | tee coverage-report.log
+          statuses=("${PIPESTATUS[@]}")
+          set -e
+          rc="${statuses[0]}"; tee_rc="${statuses[1]}"
+          if [[ "$rc" -eq 0 && "$tee_rc" -ne 0 ]]; then rc="$tee_rc"; fi
+          if [[ "$rc" -ne 0 ]]; then
+            if [[ "$ENFORCE_COVERAGE" == "true" ]]; then
+              echo "::error::SQLite coverage below threshold ($COVERAGE_THRESHOLD%)."; exit 1
+            fi
+            echo "::warning::SQLite coverage below threshold ($COVERAGE_THRESHOLD%); warn-only."
+          fi
+
+      - name: Prepare SQLite reports
+        if: always()
+        run: |
+          dest="bundle/sqlite-py${{ matrix.python-version }}"
+          mkdir -p "$dest"
+          for file in pytest.log report.xml coverage.json coverage_summary.json coverage-report.log; do
+            if [ -f "$file" ]; then cp "$file" "$dest/$file"; fi
+          done
+
+      - name: Upload SQLite reports
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: sqlite-contracts-py${{ matrix.python-version }}
+          path: bundle/
+          if-no-files-found: warn
+          retention-days: 7
+
+  postgres-contracts:
+    name: PostgreSQL 16 contracts
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    env:
+      RUN_PG_CONTRACTS: "1"
+      TEST_DATABASE_URL: postgresql://postgres:postgres@localhost:5432/gbt_test
+      COVERAGE_THRESHOLD: ${{ inputs.coverage_threshold || '0' }}
+      ENFORCE_COVERAGE: ${{ inputs.enforce_coverage || false }}
+
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_DB: gbt_test
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: |
+            requirements-dev.txt
+            pyproject.toml
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          if [ -f requirements-dev.txt ]; then
+            python -m pip install -r requirements-dev.txt
+          elif [ -f pyproject.toml ]; then
+            python -m pip install -e . || echo "::warning::Project install unavailable; installing contract dependencies."
+          fi
+          python -m pip install pytest pytest-asyncio pytest-cov coverage aiosqlite asyncpg
+
+      - name: Wait for PostgreSQL
+        run: |
+          python - <<'PY'
+          import asyncio, os, sys, asyncpg
+          async def main():
+              last = None
+              for _ in range(30):
+                  try:
+                      conn = await asyncpg.connect(os.environ["TEST_DATABASE_URL"])
+                      await conn.close()
+                      print("PostgreSQL is ready."); return
+                  except Exception as exc:
+                      last = exc; await asyncio.sleep(2)
+              print(f"PostgreSQL did not become ready: {last}", file=sys.stderr)
+              raise SystemExit(1)
+          asyncio.run(main())
+          PY
+
+      - name: Run PostgreSQL contracts
+        run: |
+          set -o pipefail
+          pytest tests/contracts -q \
+            --junitxml=report.xml \
+            --cov=body --cov=migrations --cov=panel --cov=skills \
+            --cov-report=term-missing \
+            --cov-report=json:coverage.json \
+            2>&1 | tee pytest.log
+
+      - name: Coverage report
+        if: always()
+        env:
+          COVERAGE_DB_URL: ${{ secrets.coverage_db_url }}
+        shell: bash
+        run: |
+          set +e
+          args=(
+            scripts/coverage_report.py
+            --coverage coverage.json
+            --backend postgres
+            --out coverage_summary.json
+            --threshold "$COVERAGE_THRESHOLD"
+          )
+          if [[ -n "${COVERAGE_DB_URL:-}" ]]; then
+            args+=(--db "$COVERAGE_DB_URL")
+          fi
+          python "${args[@]}" 2>&1 | tee coverage-report.log
+          statuses=("${PIPESTATUS[@]}")
+          set -e
+          rc="${statuses[0]}"; tee_rc="${statuses[1]}"
+          if [[ "$rc" -eq 0 && "$tee_rc" -ne 0 ]]; then rc="$tee_rc"; fi
+          if [[ "$rc" -ne 0 ]]; then
+            if [[ "$ENFORCE_COVERAGE" == "true" ]]; then
+              echo "::error::PostgreSQL coverage below threshold ($COVERAGE_THRESHOLD%)."; exit 1
+            fi
+            echo "::warning::PostgreSQL coverage below threshold ($COVERAGE_THRESHOLD%); warn-only."
+          fi
+
+      - name: Prepare PostgreSQL reports
+        if: always()
+        run: |
+          dest="bundle/postgres"
+          mkdir -p "$dest"
+          for file in pytest.log report.xml coverage.json coverage_summary.json coverage-report.log; do
+            if [ -f "$file" ]; then cp "$file" "$dest/$file"; fi
+          done
+
+      - name: Upload PostgreSQL reports
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: postgres-contracts
+          path: bundle/
+          if-no-files-found: warn
+          retention-days: 7

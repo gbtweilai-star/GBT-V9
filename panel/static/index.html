@@ -1,0 +1,36 @@
+# panel/server.py —— 实时看槽位/账本/触手状态
+from fastapi import FastAPI
+from fastapi.responses import HTMLResponse
+import json, sqlite3, time
+
+app = FastAPI()
+LEDGER = "tentacle_ledger.db"
+
+@app.get("/api/state")
+def state():
+    db = sqlite3.connect(LEDGER)
+    rows = db.execute("SELECT scanner, status, COUNT(*) FROM ledger GROUP BY 1,2").fetchall()
+    nodes = {}
+    for scanner, status, n in rows:
+        nodes.setdefault(scanner, {})[status] = n
+    return {"ts": time.time(), "nodes": nodes}
+
+@app.get("/", response_class=HTMLResponse)
+def page():
+    return """<!doctype html><meta charset=utf-8><title>触手面板</title>
+<style>body{background:#0d1117;color:#c9d1d9;font:14px ui-monospace,monospace;padding:24px}
+.card{background:#161b22;border:1px solid #30363d;border-radius:8px;padding:16px;margin:8px 0}
+.g{color:#3fb950}.r{color:#f85149}.y{color:#d29922}</style>
+<h2>触手总控面板</h2><div id=app>加载中…</div>
+<script>
+async function tick(){
+  const s = await (await fetch('/api/state')).json();
+  let h = '';
+  for (const [tid, st] of Object.entries(s.nodes)){
+    const cells = Object.entries(st).map(([k,v])=>`<span class=g>${k}:${v}</span>`).join(' ');
+    h += `<div class=card><b>${tid}</b><br>${cells}</div>`;
+  }
+  document.getElementById('app').innerHTML = h || '暂无数据';
+}
+setInterval(tick, 2000); tick();
+</script>"""

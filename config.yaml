@@ -1,0 +1,33 @@
+# ═══ CLIProxyAPI v8 配置（示例；密钥一律从环境变量注入，本文件只写"钥匙名"）═══
+server:
+  host: 127.0.0.1
+  port: 8317
+
+# 客户端 key：每根触手一把（隔离使用：配额/记忆互不打扰；主脑持管理权）
+client-keys:
+  - name: brain            # 主脑
+    key: ${OPENAI_API_KEY}
+    rpm: 600
+  - name: tentacle-t1
+    key: ${TENTACLE_T1_KEY}
+    rpm: 60
+  - name: tentacle-t2
+    key: ${TENTACLE_T2_KEY}
+    rpm: 60
+
+# 上游凭据：由 CLIProxyAPI 登录态或环境变量提供（oauth auth-dir 持久化）
+upstreams:
+  - provider: gemini-cli
+  - provider: codex
+  - provider: claude-code
+
+routing:
+  strategy: round-robin
+  session-affinity: true          # 会话粘住凭据，互不打扰
+
+oauth:
+  auth-dir: /root/.cli-proxy-api  # 容器内持久化目录（见 compose volumes）
+
+# 管理面：只给主脑
+management:
+  key: ${CLI_PROXY_MGMT_KEY}
