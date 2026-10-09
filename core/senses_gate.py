@@ -69,86 +69,61 @@ def require_eye(*, max_age_ms: float = DEFAULT_MAX_AGE_MS, wait_ms: float = 1200
 
 def act(action, *, decision: dict, max_age_ms: float = DEFAULT_MAX_AGE_MS,
         eyes_name: str = "main", expect_change: bool = True, verify: str = "screen") -> dict:
-    """**唯一的动手口**：眼→脑→手→验；缺任一步拒动。"""
+    """**唯一的动手口**：眼→脑→手→验；缺任一步拒动（四步全绿才放行）。"""
     t0 = time.time()
     d = decision or {}
-    # ① 眼：目击证词（按动作类型选对眼；流不新鲜就当场抓）
-    from core import eyewitness as _EW
-    _kind = str(d.get("眼", "desktop"))
-    _w = _EW.witness(_kind, max_age_ms=max_age_ms)
-    steps = {"眼": False, "脑": False, "手": False, "验": False}
-    if not _w.get("ok"):
+    # ① 眼：目击证词（按动作类型选对眼；流不新鲜就当场抓；抓不到才拒）
+    from core import eyewitness as EW
+    _w = EW.witness(str(d.get("眼", "desktop")), max_age_ms=max_age_ms)
+    steps = {"眼": bool(_w.get("ok")), "脑": False, "手": False, "验": False}
+    if not steps["眼"]:
         rec = {"at": time.strftime("%Y-%m-%dT%H:%M:%S"), "抓": "act", "拒动": True,
-               "目击证词": _w, "在哪一步": "①眼",
+               "在哪一步": "①眼", "目击证词": _w,
                "读数": _w.get("拒动原因") or _w,
                "口径": "没有新鲜取景 ⇒ 不许动手（按动作选对眼；抓不到才拒）"}
-        _log(rec)
-        return rec
-    steps["眼"] = True
+        _log(rec); return rec
     # ② 脑：必须有目标与理由
     if not (d.get("目标") and d.get("理由")):
         rec = {"at": time.strftime("%Y-%m-%dT%H:%M:%S"), "抓": "act", "拒动": True,
-               "在哪一步": "②脑", "读数": "decision 缺 目标/理由（收到 %s）" % list(d),
+               "在哪一步": "②脑", "目击证词": _w,
+               "读数": "decision 缺 目标/理由（收到 %s）" % list(d),
                "口径": "无脑操作被禁：必须先写清目标与理由"}
-        _log(rec)
-        return rec
+        _log(rec); return rec
     steps["脑"] = True
-    # ③ 手 + ④ 验（复用 vision_loop 的 手打完抓下一帧复核 或 动作回执）
-    _ret = {}
-    def _wrapped():
-        out = action()
-        _ret["值"] = out
-        return out
-    r = {}
+    # ③ 手：**真调一次动作**，并量真响应
+    ret, err = None, None
+    t1 = time.time()
     try:
-        from core import vision_loop as VL
-        r = VL.eyes(eyes_name).act_and_verify(_wrapped, verify_ms=float(d.get("复核等待ms") or 150.0))
+        ret = action()
     except Exception as e:  # noqa: BLE001
-        r = {"错": type(e).__name__}
-    # ★ 铁律：动作必须**真被调用过**才算过（复核那步没调到就当场补调一次）
-    if not _ret:
+        err = "%s: %s" % (type(e).__name__, str(e)[:80])
+    steps["手"] = bool(ret) or (err is None)
+    true_resp_ms = round((time.time() - t1) * 1000, 1)
+    # ④ 验：return 口径=看动作回执；screen 口径=再抓一帧看画面变化
+    changed = None
+    post_frame = None
+    if verify == "screen":
         try:
-            _wrapped()
-        except Exception as e:  # noqa: BLE001
-            r["动作错"] = type(e).__name__
-    steps["手"] = bool(_ret) or bool((r.get("动作") or {}).get("做没做"))
-    changed = r.get("画面变化")
-    if verify == "return":
-        steps["验"] = bool(_ret.get("值")) and bool((_ret.get("值") or {}).get("ok", True))
+            from core import vision_loop as VL
+            lp = VL.eyes(eyes_name)
+            pre = lp.latest()
+            time.sleep(min(0.3, float(d.get("复核等待ms") or 150.0) / 1000.0))
+            post = lp.latest()
+            post_frame = getattr(post, "seq", None)
+            if pre is not None and post is not None and getattr(pre, "bytes_", b"") and getattr(post, "bytes_", b""):
+                changed = (pre.bytes_ != post.bytes_)
+        except Exception:  # noqa: BLE001
+            changed = None
+        steps["验"] = (changed is not None) and (bool(post_frame) or not expect_change)
     else:
-        steps["验"] = bool(r.get("复核帧")) and (changed is not None)
-    ok = all(steps.values()) and ((changed is not False) if (expect_change and verify == "screen") else True)
+        steps["验"] = bool(ret) and bool((ret or {}).get("ok", True)) if isinstance(ret, dict) else bool(ret)
+    ok = all(steps.values()) and (err is None) and ((changed is not False) if verify == "screen" else True)
     rec = {"at": time.strftime("%Y-%m-%dT%H:%M:%S"), "抓": "act", "拒动": not ok,
            "步骤": steps, "目击证词": _w, "脑": d.get("目标"), "理由": d.get("理由"),
-           "复核帧": r.get("复核帧"), "画面变化": changed, "验的口径": verify,
-           "真响应ms": r.get("真响应ms"),
-           "动作回执": (_ret.get("值") if isinstance(_ret.get("值"), dict) else None),
-           "总ms": round((time.time() - t0) * 1000, 1),
-           "口径": "眼→脑→手→验 四步全绿才算动手；动作必须真被调用过"}
-    _ret = {}
-    def _wrapped():
-        out = action()
-        _ret["值"] = out
-        return out
-    try:
-        from core import vision_loop as VL
-        lp = VL.eyes(eyes_name)
-        r = lp.act_and_verify(_wrapped, verify_ms=float(d.get("复核等待ms") or 150.0))
-    except Exception as e:  # noqa: BLE001
-        r = {"动作": {"做没做": False}, "错": type(e).__name__}
-    steps["手"] = bool((r.get("动作") or {}).get("做没做"))
-    changed = r.get("画面变化")
-    if verify == "return":
-        steps["验"] = bool(_ret.get("值")) and bool((_ret.get("值") or {}).get("ok", True))
-    else:
-        steps["验"] = bool(r.get("复核帧")) and (changed is not None)
-    ok = all(steps.values()) and ((changed is not False) if (expect_change and verify == "screen") else True)
-    rec = {"at": time.strftime("%Y-%m-%dT%H:%M:%S"), "抓": "act", "拒动": not ok,
-           "步骤": steps, "目击证词": _w, "脑": d.get("目标"), "理由": d.get("理由"),
-           "复核帧": r.get("复核帧"), "画面变化": changed, "验的口径": verify,
-           "动作回执": (_ret.get("值") if isinstance(_ret.get("值"), dict) else None),
-           "总ms": round((time.time() - t0) * 1000, 1),
-           "口径": "眼→脑→手→验 四步全绿才算动手；画面没变要如实报"}
+           "真响应ms": true_resp_ms, "复核帧": post_frame, "画面变化": changed,
+           "验的口径": verify, "动作回执": (ret if isinstance(ret, dict) else None),
+           "动作错": err, "总ms": round((time.time() - t0) * 1000, 1),
+           "口径": "眼→脑→手→验 四步全绿才放行；动作真调过、真响应量过"}
     _log(rec)
     return rec
 
