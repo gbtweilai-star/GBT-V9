@@ -85,7 +85,7 @@ def main() -> int:
     if mx:
         check("④ BGM(MX) 时长 ≥ 成片时长", dur(mx) + 0.05 >= fd, "MX %.2fs vs 成片 %.2fs" % (dur(mx), fd))
     else:
-        check("④ BGM(MX) 时长（缺 MX 轨，如实报）", False, "没有 MX 轨 ⇒ 现在是"整轨混音"，未达分轨交付")
+        check("④ BGM(MX) 时长（缺 MX 轨，如实报）", False, "没有 MX 轨 ⇒ 现在是「整轨混音」，未达分轨交付")
     # ⑤ 前 8 秒有声音（钩子不静音）
     fs = first_seconds_db(film)
     check("⑤ 前 8 秒有声音（钩子不静音）", bool(fs.get("ok")) and (fs.get("mean_db") or -99) > -50,
