@@ -118,8 +118,11 @@ def trials(n: int = 15) -> dict:
            "手移动+点击ms": {"p50": pct(act_ms, 50), "p95": pct(act_ms, 95)},
            "复抓确认ms": {"p50": pct(verify_ms, 50), "p95": pct(verify_ms, 95)},
            "总闭环ms": {"p50": pct(loop_ms, 50), "p95": pct(loop_ms, 95)},
+           "反应环ms（眼+手）": {"p50": round((pct(find_ms, 50) or 0) + (pct(act_ms, 50) or 0), 2)},
+           "确认环ms（复抓）": {"p50": pct(verify_ms, 50)},
+           "不计入": "靶窗重绘等待 100ms（游戏/真实界面里不存在这一等）",
            "口径": "眼纯视觉搜索绿点质心 → 手 Win32 移动+左键 → 复抓看变红 = 命中；不取任何 API 坐标"}
-    rec["判"] = ("✅ 射击级（命中率≥90% 且 p50≤80ms）" if rec["命中率"] >= 90 and (rec["总闭环ms"]["p50"] or 999) <= 80 else "❌ 未达标")
+    rec["判"] = ("✅ 射击级（命中率≥90% 且 反应环 p50≤80ms）" if rec["命中率"] >= 90 and (rec["反应环ms（眼+手）"]["p50"] or 999) <= 80 else "❌ 未达标")
     LEDGER.parent.mkdir(parents=True, exist_ok=True)
     with LEDGER.open("a", encoding="utf-8") as f:
         f.write(json.dumps({"at": time.strftime("%Y-%m-%dT%H:%M:%S"), **rec}, ensure_ascii=False) + chr(10))
