@@ -31,7 +31,7 @@ check("process 真跑且退码如实", r1.get("ok") is True and r1.get("码") ==
       "ok=%s 码=%s 出字=%s" % (r1.get("ok"), r1.get("码"), (r1.get("stdout") or "").strip()[:20]))
 
 # ② process：危险命令必须拒动（准入名单）
-r2 = P.plug_and_run("t012", kind="process", action="run", args={"cmd": ["whoami"]}   # 真存在的可执行程序，但不在准入名单, timeout=30)
+r2 = P.plug_and_run("t012", kind="process", action="run", args={"cmd": ["whoami"]}, timeout=30)
 check("危险命令被拒动（准入名单）", r2.get("ok") is False, str(r2.get("reason") or r2.get("错") or r2)[:80])
 
 # ③ file：探测 / 读
