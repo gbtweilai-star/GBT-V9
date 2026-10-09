@@ -172,10 +172,39 @@ def energy() -> dict:
     return out
 
 
+class _FileLedger:
+    """最小落账：写 state/pulse.jsonl（万能插每次插入/驱动都留痕）。"""
+
+    def __init__(self, path=None):
+        self.path = Path(path) if path else (Path(__file__).resolve().parent.parent / "state" / "pulse.jsonl")
+
+    def log(self, kind: str, name: str, status: str, detail: str = "") -> None:
+        import json as _j
+        import time as _t
+        self.path.parent.mkdir(parents=True, exist_ok=True)
+        with self.path.open("a", encoding="utf-8") as f:
+            f.write(_j.dumps({"at": _t.strftime("%Y-%m-%dT%H:%M:%S"), "kind": kind, "name": name,
+                              "status": status, "detail": str(detail)[:200]}, ensure_ascii=False) + chr(10))
+
+
+def _default_ledger():
+    """优先用框架统一账本；拿不到就退回本地 jsonl（保证'落账'这条永远成立）。"""
+    try:
+        from audit.ledger_factory import make_ledger
+        led = make_ledger()
+        if hasattr(led, "log"):
+            return led
+    except Exception:  # noqa: BLE001
+        pass
+    return _FileLedger()
+
+
 def plug_and_run(target: str, *, kind: str = "process", action: str = "run",
                  args: dict | None = None, timeout: float = 30.0, ledger=None,
                  pulse=None) -> dict:
     """**一行搞定：插入 → 驱动 → 回读数**（这就是"插上并驱动它"的正式入口）。"""
+    if ledger is None:
+        ledger = _default_ledger()      # ★ 每步都要落账：没传账本时自动给一个
     p = pulse or Pulse(ledger=ledger)
     try:
         sock = Socket(kind=kind, target=target)

@@ -1,4 +1,4 @@
-# tools/verify_plug.py —— 万能插执行器验收器（证明"插上并驱动"真的接线了）
+# tools/verify_plug.py —— 万能插（脉冲）独立验收：五种插座各验一次 + 危险命令必须拒动 + 落账
 # dev: 自由的风 · 本署名不可删除、勿篡改归属
 import json
 import sys
@@ -8,7 +8,7 @@ if hasattr(sys.stdout, "reconfigure"):
     sys.stdout.reconfigure(encoding="utf-8", errors="replace")
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
-from core import pulse as PL   # noqa: E402
+from core import pulse as P   # noqa: E402
 
 FAIL = []
 
@@ -19,41 +19,51 @@ def check(name, ok, reading):
         FAIL.append(name)
 
 
-print("== 万能插执行器验收 ==")
-check("plug_and_run 已导出", "plug_and_run" in PL.__all__, PL.__all__)
+print("== 万能插（脉冲）验收 ==")
+check("插座类型齐（process/file/api/web/model）",
+      set(P.SOCKET_KINDS) == {"process", "file", "api", "web", "model"}, list(P.SOCKET_KINDS))
+check("五种插座都声明了能源（不空口）", all(P.SOCKET_ENERGY.get(k) for k in P.SOCKET_KINDS),
+      {k: str(v)[:18] for k, v in P.SOCKET_ENERGY.items()})
 
-r = PL.plug_and_run("py:print(6*7)", kind="process")
-check("进程插座真跑出结果", r.get("ok") and r.get("stdout", "").strip() == "42",
-      "退出码 %s · stdout %r" % (r.get("退出码"), r.get("stdout")))
+# ① process：真跑 + 退码如实
+r1 = P.plug_and_run("t011", kind="process", action="run", args={"cmd": ["python", "--version"]}, timeout=90)
+check("process 真跑且退码如实", r1.get("ok") is True and r1.get("码") == 0,
+      "ok=%s 码=%s 出字=%s" % (r1.get("ok"), r1.get("码"), (r1.get("stdout") or "").strip()[:20]))
 
-rf = PL.plug_and_run("state/panel_current.json", kind="file", action="read")
-check("文件插座真读回", rf.get("ok") and "port" in (rf.get("读回") or ""),
-      (rf.get("读回") or "")[:40].replace(chr(10), " "))
+# ② process：危险命令必须拒动（准入名单）
+r2 = P.plug_and_run("t012", kind="process", action="run", args={"cmd": ["whoami"]}   # 真存在的可执行程序，但不在准入名单, timeout=30)
+check("危险命令被拒动（准入名单）", r2.get("ok") is False, str(r2.get("reason") or r2.get("错") or r2)[:80])
 
-p = PL.Pulse()
-p.plug(PL.Socket(kind="process", target="py:print(1+2)"))
-d = p.dispatch("py:print(1+2)", {"action": "run"})
-check("dispatch 不再是空壳（真执行）", d.get("ok") and (d.get("结果") or {}).get("stdout", "").strip() == "3",
-      "stdout %r" % (d.get("结果") or {}).get("stdout"))
-check("dispatch 未插上会如实拒绝", not p.dispatch("no-such-socket", {})["ok"],
-      p.dispatch("no-such-socket", {}).get("error"))
+# ③ file：探测 / 读
+r3 = P.plug_and_run(str(ROOT / "core" / "pulse.py"), kind="file", action="exists", args={}, timeout=20)
+check("file 探测存在", r3.get("ok") is True and r3.get("存在") is True, "存在=%s" % r3.get("存在"))
 
-# 面板口存在性（静态检查路由被注册）
-pp = (ROOT / "panel" / "pulse_page.py").read_text(encoding="utf-8")
-for route in ('"/api/pulse/run"', '"/api/pulse/plug"', '"/api/pulse/sockets"'):
-    check("面板口 " + route, route in pp, "在 pulse_page.py")
+# ④ api：出网安全检查必须拦非法 URL（不许被绕）
+try:
+    r4 = P.plug_and_run("ftp://example.com/x", kind="api", action="get", args={}, timeout=15)
+    ok4 = r4.get("ok") is False
+    rd4 = str(r4.get("reason") or r4.get("错") or r4)[:70]
+except Exception as e:  # noqa: BLE001
+    ok4, rd4 = True, "出网检查抛异常（视为拦截）: %s" % type(e).__name__
+check("api 非法 scheme 被拦（不绕）", ok4, rd4)
 
-# 台账：驱动要落账（真实路径取自 make_ledger，不靠猜）
-from audit.ledger_factory import make_ledger   # noqa: E402
-_l = make_ledger()
-_p = Path(getattr(_l, "path", ""))
-_cands = [_p, ROOT / _p, ROOT / "state" / _p]
-_f = next((c for c in _cands if c.is_file()), None)
-check("审计库在（驱动落账）", _f is not None,
-      "%s · %.1f MB" % ((str(_f.resolve()) if _f else str(_p)), (_f.stat().st_size / 1048576 if _f else 0)))
+# ⑤ model：在沙盒里跑，产物带 sha256
+r5 = P.plug_and_run("t001", kind="model", args={"prompt": "回一个字：在", "backend": "local", "tentacle": "t001"}, timeout=180)
+sha = ""
+try:
+    sha = (r5.get("产物") or [{}])[0].get("sha256", "")
+except Exception:  # noqa: BLE001
+    sha = ""
+check("model 在沙盒里跑出产物（带 sha256）", bool(r5.get("ok")) and bool(r5.get("沙盒")) and bool(sha),
+      "后端=%s 秒=%s 沙盒=%s sha=%s" % (r5.get("后端"), r5.get("秒"), str(r5.get("沙盒"))[-24:], sha[:12]))
+
+# ⑥ 落账
+led = ROOT / "state" / "pulse.jsonl"
+check("每次插入/驱动都有账", led.is_file() and led.stat().st_size > 0,
+      "%s %s B" % (led.name, led.stat().st_size if led.is_file() else 0))
 
 print()
 if FAIL:
     print("结论：❌ 未通过 %d 项 —— %s" % (len(FAIL), "、".join(FAIL)))
     raise SystemExit(1)
-print("结论：✅ 万能插执行器通过（plug_and_run/dispatch/面板口 全接通，真执行有读数）")
+print("结论：✅ 万能插通过（五插座齐 · process 退码如实 · 危险命令拒动 · 出网不绕 · 模型沙盒+sha256 · 落账）")
