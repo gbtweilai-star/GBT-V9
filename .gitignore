@@ -68,3 +68,6 @@ state/browser_own_profile/
 state/tripo/
 data/tentacle_store/
 *.sqlite3
+
+# 本地保留、暂不入仓：改 workflow 文件需要 GitHub workflow scope（授权到位后再加回）
+.github/workflows/coverage-nightly.yml

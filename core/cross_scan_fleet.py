@@ -43,11 +43,19 @@ def _files(limit: int = 0) -> list:
     return out[:limit] if limit else out
 
 
+def _rel(f) -> str:
+    """仓内用相对路径（保持老口径），**仓外用绝对路径**（V9 穿透扫描要能穿出工作树）。"""
+    try:
+        return str(Path(f))
+    except Exception:  # noqa: BLE001 仓外目标
+        return str(Path(f).resolve())
+
+
 def shards(files: list, n: int = 100) -> dict:
     """按全路径哈希分片：同一文件永远落同一片（可复现，不许挑片）。"""
     buckets: dict = {}
     for f in files:
-        h = int(hashlib.sha256(str(f.relative_to(ROOT)).encode()).hexdigest()[:8], 16)
+        h = int(hashlib.sha256(_rel(f).encode()).hexdigest()[:8], 16)
         buckets.setdefault(h % n, []).append(f)
     return buckets
 
@@ -59,7 +67,7 @@ def scan_shard(files: list, checker: str) -> list:
         try:
             for i, line in enumerate(f.read_text(encoding="utf-8", errors="replace").splitlines(), 1):
                 if pat.search(line):
-                    hits.append({"文件": str(f.relative_to(ROOT)), "行": i, "检查": checker,
+                    hits.append({"文件": _rel(f), "行": i, "检查": checker,
                                  "片段": line.strip()[:100]})
         except OSError:
             continue
