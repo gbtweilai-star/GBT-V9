@@ -6,6 +6,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from senses.r2 import R2Unavailable, r2_client, r2_bucket  # noqa: E402
+from core.swallow import swallow as _swallow
 
 @dataclass
 class Segment:
@@ -91,8 +92,9 @@ class Player:
             try:
                 subprocess.run(cmd_lossless, check=True, capture_output=True)
                 return out, len(parts)
-            except (FileNotFoundError, subprocess.CalledProcessError):
-                pass                                              # 段参数不完全一致 → 走重编码
+            except (FileNotFoundError, subprocess.CalledProcessError) as e:
+                _swallow(__file__, e)
+                                              # 段参数不完全一致 → 走重编码
         cmd = ["ffmpeg", "-y", "-f", "concat", "-safe", "0",
                "-i", str(listfile), "-c:v", "libx264", "-crf", "12",
                "-pix_fmt", "yuv420p", out]                        # 给用户看的 MP4

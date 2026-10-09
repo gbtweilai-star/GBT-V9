@@ -54,7 +54,7 @@ def check_cli():
     out = []
     prefix = _cli_prefix()
     for c in CLI_SUBS:
-        r = subprocess.run([*prefix, c, "--help"], capture_output=True, text=True)
+        r = subprocess.run([*prefix, c, "--help"], capture_output=True, text=True, encoding="utf-8", errors="replace")
         out.append({"cap": f"CLI:{c}", "ok": r.returncode == 0,
                     "err": (r.stderr or "")[:80] if r.returncode else ""})
     return out

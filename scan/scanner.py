@@ -7,6 +7,7 @@ import hashlib
 import os
 from dataclasses import dataclass, field
 from pathlib import Path
+from core.swallow import swallow as _swallow
 
 SKIP_DIRS = {".git", "node_modules", "__pycache__", ".venv", "venv", ".next",
              "dist", "build", ".mypy_cache", ".pytest_cache"}
@@ -65,16 +66,18 @@ def full_sweep(root, *, rules=None, ledger=None, scanner_id: str = "t1") -> Scan
         if ledger:
             try:
                 ledger.log(scanner_id, t, "scanned", "sweep")
-            except Exception:
-                pass
+            except Exception as e:
+                _swallow(__file__, e)
+
     result.missing = sorted(set(targets) - seen)
     if ledger:
         try:
             ledger.log(scanner_id, f"coverage:{result.coverage:.4f}",
                         "scanned" if not result.missing else "vuln",
                         f"missing={len(result.missing)}")
-        except Exception:
-            pass
+        except Exception as e:
+            _swallow(__file__, e)
+
     return result
 
 

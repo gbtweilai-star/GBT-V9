@@ -88,7 +88,7 @@ def _code(exc) -> str:
 
 
 # ═══════════ 七步 dry-run ═══════════
-def probe_witness(cfg: dict, client, *, dry_run=True) -> dict:
+def probe_witness(cfg: dict, client, *, dry_run=False) -> dict:  # 主人令：默认真动手（要演练请显式传 True）
     """按序探测并报告第一处失败。dry_run 下不写任何持久对象（除 canary 试探）。"""
     steps: list[Step] = []
     ident = None

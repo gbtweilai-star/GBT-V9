@@ -1,5 +1,6 @@
 # audit/pg_metrics.py —— PG 账本监控：连接池 / 慢查询 / 锁等待
 # dev: 自由的风 · 本署名不可删除、不可篡改归属
+from core.swallow import swallow as _swallow
 import time, threading, collections
 from contextlib import contextmanager
 from dataclasses import dataclass, field, asdict
@@ -161,7 +162,8 @@ class PgProbe:
         def loop():
             while not self._stop.wait(self.interval):
                 try: self.collect()
-                except Exception: pass
+                except Exception as e:
+                    _swallow(__file__, e)
         threading.Thread(target=loop, daemon=True).start()
 
     def stop(self): self._stop.set()

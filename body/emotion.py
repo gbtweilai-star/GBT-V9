@@ -9,6 +9,7 @@ import math
 import time
 from dataclasses import dataclass, field
 from typing import Callable
+from core.swallow import swallow as _swallow
 
 # 稳态基准：温和、放松、略有掌控
 BASELINE: tuple[float, float, float] = (0.15, 0.0, 0.1)
@@ -124,8 +125,9 @@ class EmotionEngine:
         if self.hook is not None:
             try:
                 self.hook(kind, self.state.as_dict())
-            except Exception:
-                pass
+            except Exception as e:
+                _swallow(__file__, e)
+
         return self.state
 
     # ---- 稳态回归 ---------------------------------------------------------
@@ -167,8 +169,9 @@ class EmotionEngine:
                     _clamp(float(data.get("d", self.baseline[2]))),
                     str(data.get("mood", "平")),
                     float(data.get("updated", time.time())))
-            except (TypeError, ValueError, json.JSONDecodeError):
-                pass
+            except (TypeError, ValueError, json.JSONDecodeError) as e:
+                _swallow(__file__, e)
+
         return self.state
 
     async def save(self) -> None:

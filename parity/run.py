@@ -9,6 +9,7 @@ from __future__ import annotations
 import argparse, asyncio, json, os, re, shutil, signal, subprocess
 import sys, uuid
 from pathlib import Path
+from core.swallow import swallow as _swallow
 
 OK, PARITY_FAILED, CONFIG_ERROR, INTERNAL_ERROR, TIMEOUT = range(5)
 
@@ -241,8 +242,9 @@ def parent(args) -> int:
     try:
         manifest = json.loads(Path(args.manifest).read_text("utf-8"))
         backfill_unreached(result, manifest)
-    except Exception:
-        pass
+    except Exception as e:
+        _swallow(__file__, e)
+
 
     if timed_out:
         result["status"] = "timeout"; code = TIMEOUT

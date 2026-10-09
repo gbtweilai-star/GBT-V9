@@ -10,6 +10,7 @@
 #      修掉原稿 PG 专属 TIMESTAMPTZ/now() 在 SQLite 后端直接炸的问题；
 #   ② 修原稿笔误 pyautogui_hotkey（未定义）→ self._gui.hotkey("ctrl","c")；
 #   ③ 子进程一律参数列表（无 shell 拼接）；launch/api 探针接受 list 或字符串（shlex 切分）。
+from core.swallow import swallow as _swallow
 import os, time, json, shlex, platform, subprocess
 from dataclasses import dataclass, field
 from enum import Enum
@@ -113,7 +114,7 @@ class Actuator:
                           'UI element "' + str(target.get("selector")) + '" of front window of '
                           '(first process whose frontmost is true)')
                 out = subprocess.run(["osascript", "-e", script],
-                                     capture_output=True, text=True, timeout=3).stdout
+                                     capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=3).stdout
                 x, y = [int(v.strip()) for v in out.split(",")]
                 return {"x": x, "y": y}
             if OSNAME == "Linux":
@@ -131,7 +132,7 @@ class Actuator:
     def _locate_api(self, target):
         try:
             r = subprocess.run(_as_cmd_list(target["api"]), capture_output=True,
-                               text=True, timeout=target.get("timeout_ms", 5000) / 1000)
+                               text=True, encoding="utf-8", errors="replace", timeout=target.get("timeout_ms", 5000) / 1000)
             return {"out": r.stdout.strip()} if r.returncode == 0 else None
         except Exception:
             return None
@@ -276,9 +277,9 @@ class Actuator:
             if OSNAME == "Darwin":
                 return subprocess.run(["osascript", "-e",
                     'tell app "System Events" to get name of first process whose frontmost is true'],
-                    capture_output=True, text=True, timeout=2).stdout.strip()
-        except Exception:
-            pass
+                    capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=2).stdout.strip()
+        except Exception as e:
+            _swallow(__file__, e)
         return ""
 
     def _log(self, a, layer, ok, verified, err, before, after):
@@ -299,8 +300,8 @@ class Actuator:
                          before_state,after_state)
                         VALUES(?,?,?,?,?,?,?,?,?,?)
                         ON CONFLICT (action_id) DO NOTHING""", row)
-        except Exception:
-            pass
+        except Exception as e:
+            _swallow(__file__, e)
 
     # ═══ 任务级：观察→计划→逐步执行→验证 ═══
     def run_task(self, goal: str, max_steps=15) -> dict:
@@ -339,8 +340,8 @@ class Actuator:
                         path = os.path.join(str(outdir), f"obs_{int(time.time() * 1000)}.png")
                         img.save(path)
                         out["frame"] = path
-            except Exception:
-                pass
+            except Exception as e:
+                _swallow(__file__, e)
         return json.dumps(out, ensure_ascii=False)[:1500]
 
 

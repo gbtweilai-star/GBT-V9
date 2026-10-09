@@ -19,6 +19,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from skills.native import Availability, SkillResult  # noqa: E402
+from core.swallow import swallow as _swallow
 
 CODEX_BIN = os.environ.get("CODEX_BIN", "codex")
 DEFAULT_TIMEOUT = int(os.environ.get("CODEX_TIMEOUT_S", "1800"))
@@ -120,8 +121,9 @@ class CodexTool:
                              "scanned" if rc == 0 else "vuln",
                              f"rc={rc} {seconds}s task={task[:120]}",
                              event_id=f"codex-{int(started)}")
-            except Exception:
-                pass
+            except Exception as e:
+                _swallow(__file__, e)
+
 
         tail = "\n".join((out or err).strip().splitlines()[-40:])
         return SkillResult(ok=rc == 0,

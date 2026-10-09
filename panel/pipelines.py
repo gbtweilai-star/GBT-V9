@@ -8,6 +8,7 @@
 from __future__ import annotations
 
 from typing import Any
+from core.swallow import swallow as _swallow
 
 # ── 数据源清单（每项：key/label/表名/时间列/引用列/映射函数名）──
 SOURCES: list[dict[str, Any]] = [
@@ -58,8 +59,9 @@ def _pick(obj: Any, *names: Any, default: Any = None) -> Any:
                     return obj[name]
                 except Exception:
                     continue
-    except Exception:
-        pass
+    except Exception as e:
+        _swallow(__file__, e)
+
     return default
 
 

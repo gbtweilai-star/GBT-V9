@@ -11,6 +11,7 @@
 #
 # 落盘说明（2026-10-06）：双方言化——时间统一存 epoch 秒（sqlite REAL / pg DOUBLE
 # PRECISION），建表/写入按 is_pg 分支用字面 SQL + 参数绑定，游标走 senses.sqldialect.txn。
+from core.swallow import swallow as _swallow
 import os, json, time, uuid, threading
 from enum import Enum
 
@@ -171,15 +172,17 @@ class AlertManager:
                         (alert_key,episode_id,transition,level,value,threshold,detail,ts)
                         VALUES(?,?, 'fired',?,?,?,?,?)
                         ON CONFLICT (alert_key,episode_id,transition) DO NOTHING""", row)
-        except Exception:
-            pass
+        except Exception as e:
+            from core import swallow as _sw; _sw.swallow(__file__, e)
+
         self._last_fire[key] = time.time()
         # 真写一条 blocked 到账本（status 合法值里有 blocked）
         try:
             self.led.log("panel-alert", f"alert:{key}", "blocked",
                          f"{rule['label']}={value}{rule['unit']} (episode={episode})")
-        except Exception:
-            pass
+        except Exception as e:
+            from core import swallow as _sw; _sw.swallow(__file__, e)
+
         return {"key": key, "level": rule["level"], "value": value,
                 "episode": episode, "transition": "fired", "label": rule["label"]}
 
@@ -201,8 +204,9 @@ class AlertManager:
                         (alert_key,episode_id,transition,level,value,threshold,detail,ts)
                         VALUES(?,?,'recovered',?,?,?,?,?)
                         ON CONFLICT (alert_key,episode_id,transition) DO NOTHING""", row)
-        except Exception:
-            pass
+        except Exception as e:
+            from core import swallow as _sw; _sw.swallow(__file__, e)
+
         return {"key": key, "level": rule["level"], "value": value,
                 "episode": episode, "transition": "recovered",
                 "label": rule["label"], "duration_sec": int(dur)}
@@ -229,8 +233,9 @@ class AlertManager:
                           state=EXCLUDED.state, episode_id=EXCLUDED.episode_id,
                           first_seen=EXCLUDED.first_seen, last_seen=EXCLUDED.last_seen,
                           last_value=EXCLUDED.last_value, peak_value=EXCLUDED.peak_value""", row)
-        except Exception:
-            pass
+        except Exception as e:
+            from core import swallow as _sw; _sw.swallow(__file__, e)
+
 
     # ── 对外：一次探测 + 全指标评估 ──
     def tick(self) -> dict:
@@ -301,7 +306,8 @@ class AlertManager:
         def loop():
             while not self._stop.wait(self.interval):
                 try: self.tick()
-                except Exception: pass
+                except Exception as e:
+                    _swallow(__file__, e)
         threading.Thread(target=loop, daemon=True, name="alert-loop").start()
 
 
@@ -357,8 +363,9 @@ class AlertManager:
                         (alert_key,episode_id,transition,level,value,threshold,detail,ts)
                         VALUES(?,?,?,?,?,?,?,?)
                         ON CONFLICT (alert_key,episode_id,transition) DO NOTHING""", row)
-        except Exception:
-            pass
+        except Exception as e:
+            from core import swallow as _sw; _sw.swallow(__file__, e)
+
 
     def _persist_incident(self, alert_key, state, episode, cur):
         self._state[alert_key] = {"state": state, "episode": episode,
@@ -370,7 +377,8 @@ class AlertManager:
                 "first": cur.get("first") or time.time(),
                 "last_value": cur.get("total"),
                 "peak": cur.get("total")})
-        except Exception:
-            pass
+        except Exception as e:
+            from core import swallow as _sw; _sw.swallow(__file__, e)
+
 
     def stop(self): self._stop.set()

@@ -11,6 +11,7 @@ dev: 自由的风 · 本署名不可删除、不可篡改归属
   python audit/stack_acceptance.py --json       # 只输出 JSON
 """
 from __future__ import annotations
+from core.swallow import swallow as _swallow
 import argparse, json, os, sqlite3, sys, time, socket, hashlib
 import urllib.request, urllib.error
 from pathlib import Path
@@ -66,8 +67,8 @@ def _validate_probe_url(url: str) -> str:
         ip = ipaddress.ip_address(host)
         if ip.is_private or ip.is_reserved or ip.is_loopback or ip.is_link_local:
             raise Unread(f"拒绝私有/保留地址：{host}")
-    except ValueError:
-        pass  # 域名：交由 DNS/证书层校验
+    except ValueError as e:
+        _swallow(__file__, e)
     return url
 
 
@@ -201,15 +202,21 @@ def check_5_r2() -> str:
         objects = [p for p in base.rglob("*") if p.is_file()] if base.exists() else []
         if not objects and not archived_keys:
             raise Unread(f"模拟桶为空：{base}")
-        sample = str(objects[0].relative_to(base)) if objects else archived_keys[0]
+        in_bucket = {str(p.relative_to(base)).replace(os.sep, "/") for p in objects}
+        # ★挑"索引里有、桶里也在"的那个 key 读元数据；索引里缺的另行计数（陈旧索引不是不可用）
+        present = [k for k in archived_keys if k in in_bucket]
+        missing_keys = [k for k in archived_keys if k not in in_bucket]
+        sample = present[0] if present else (sorted(in_bucket)[0] if in_bucket
+                                            else archived_keys[0])
         head = None
-        if archived_keys:
-            try:
-                head = client.head_object(Bucket=bucket, Key=archived_keys[0])["ContentLength"]
-            except Exception as exc:  # noqa: BLE001
-                raise Unread(f"模拟对象读元数据失败：{exc}")
+        try:
+            head = client.head_object(Bucket=bucket, Key=sample)["ContentLength"]
+        except Exception as exc:                              # noqa: BLE001
+            raise Unread(f"模拟对象读元数据失败：{exc}")
+        extra = f" · 索引缺失={len(missing_keys)}" if missing_keys else ""
         return (f"模拟模式 ok · {len(objects)} 对象 · 样本={sample} · "
-                f"归档索引={len(archived_keys)} 段" + (f" · 元数据={head}B" if head else ""))
+                f"归档索引={len(archived_keys)} 段（桶内 {len(present)}）"
+                + (f" · 元数据={head}B" if head else "") + extra)
 
     try:
         resp = client.list_objects_v2(Bucket=bucket, MaxKeys=1)

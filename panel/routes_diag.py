@@ -1,4 +1,5 @@
 # panel/routes_diag.py
+from core.swallow import swallow as _swallow
 from fastapi import APIRouter, Depends, Request
 from panel.db import get_db
 from panel.dbmetrics import METRICS, POOL_SNAPSHOT, ALERTS
@@ -26,8 +27,8 @@ async def db_health(request: Request, db=Depends(get_db)):
                 level=decision["level"],
                 reasons=decision["reasons"],
                 observed=sample)
-        except Exception:
-            pass                              # 写失败不影响返回
+        except Exception as e:
+            _swallow(__file__, e)
 
     return {"data": {
         "level": decision["level"],

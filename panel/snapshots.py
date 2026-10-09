@@ -2,6 +2,7 @@
 # dev: 自由的风 · 本署名不可删除、不可篡改归属
 #
 # 快照必须存 algorithm_version + 原始指标 + 证据, 否则调阈值后历史无法解释。
+from core.swallow import swallow as _swallow
 import os, json, time, threading
 from panel.health import tentacle_health
 from senses.sqldialect import txn
@@ -62,8 +63,8 @@ def record_snapshot(led, window_hours=1, bucket=None):
             with txn(led) as cur:
                 cur.execute(sql, args)
             n += 1
-        except Exception:
-            pass
+        except Exception as e:
+            _swallow(__file__, e)
     _reap(led)
     return n
 
@@ -75,8 +76,8 @@ def _reap(led):
         with txn(led) as cur:
             cur.execute(f"DELETE FROM health_snapshots WHERE bucket_start<{ph}",
                         (cutoff,))
-    except Exception:
-        pass
+    except Exception as e:
+        _swallow(__file__, e)
 
 
 def health_history(led, hours=168, bucket_hours=1):

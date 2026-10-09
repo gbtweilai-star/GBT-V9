@@ -198,25 +198,34 @@ class CoverageSnapshotFeed:
     """备选：直接读 coverage_snapshots，最新 per backend 覆盖不足即告警。"""
 
     def __init__(self, *, default_threshold: float = 80.0, crit_margin: float = 10.0,
-                 cooldown_s: float = 180.0) -> None:
+                 cooldown_s: float = 180.0, drop_warn: float = 2.0,
+                 drop_crit: float = 5.0) -> None:
         self.default_threshold = default_threshold
         self.crit_margin = crit_margin
         self.cooldown_s = cooldown_s
+        # 回归阈值（百分点）：某次提交比上次下降超过它就告警（主人 2026-10-06 口径）
+        self.drop_warn = float(os.getenv("COVERAGE_DROP_WARN", str(drop_warn)))
+        self.drop_crit = float(os.getenv("COVERAGE_DROP_CRIT", str(drop_crit)))
 
     async def read(self, db) -> list[Reading]:
         if db is None:
             return []
         try:
             rows = await db.fetch_all(
-                "SELECT backend, overall_percent, threshold, generated_epoch "
+                "SELECT backend, overall_percent, threshold, generated_epoch, commit_sha "
                 "FROM coverage_snapshots "
                 "ORDER BY generated_epoch DESC, snapshot_id DESC")
         except Exception:
             return []
         latest: dict[str, dict] = {}
+        prev: dict[str, dict] = {}
         for row in rows or []:
             r = dict(row)
-            latest.setdefault(str(r["backend"]), r)
+            b = str(r["backend"])
+            if b not in latest:
+                latest[b] = r
+            elif b not in prev:
+                prev[b] = r                        # 同一 backend 的第二新 = 上一次
         out: list[Reading] = []
         for backend, r in latest.items():
             pct = float(r["overall_percent"])
@@ -234,8 +243,107 @@ class CoverageSnapshotFeed:
                 label=f"{backend} 覆盖率", unit="%")
             out.append(Reading("scan", f"scan:{backend}", pct, level, rule,
                                float(r.get("generated_epoch") or 0.0)))
+            # ★回归：与上一次比下降多少（百分点）；下降 = 变坏 → level_for 用 low 方向口径
+            p = prev.get(backend)
+            if p is not None:
+                drop = float(p["overall_percent"]) - pct
+                dlevel = ("ok" if drop < self.drop_warn
+                          else "crit" if drop >= self.drop_crit else "warn")
+                drule = FeedRule(
+                    "scan", "scan", "coverage_drop_pts", kind="coverage_regression",
+                    direction="high", warn_at=self.drop_warn, crit_at=self.drop_crit,
+                    hysteresis=0.5, cooldown_s=self.cooldown_s,
+                    label=f"{backend} 覆盖率回归", unit=" 个百分点")
+                out.append(Reading(
+                    "scan", f"scan:{backend}:drop", drop, dlevel, drule,
+                    float(r.get("generated_epoch") or 0.0),
+                    evidence={"from_commit": p.get("commit_sha"),
+                              "to_commit": r.get("commit_sha"),
+                              "prev_percent": float(p["overall_percent"]),
+                              "now_percent": pct}))
         return out
 
 
 def default_feeds() -> list:
-    return [SnapshotRuleFeed(rules_from_env())]
+    """真实事件源（按优先级）：
+    ① SnapshotJsonFeed —— 读 body_read_snapshots.payload_json（采集器真实写入的结构）
+    ② CoverageSnapshotFeed —— 读 coverage_snapshots 历史，做"覆盖率回归"判定
+    旧的 SnapshotRuleFeed 假设 (metric,value) 列，那套列在本库并不存在（等于空转），
+    故不再作为默认源，仅在自定义表结构时才用。
+    """
+    rules = rules_from_env()
+    return [SnapshotJsonFeed(rules), CoverageSnapshotFeed()]
+
+
+# ══════════ 真实快照源：解析 payload_json（与 body/tools/collect.py 写入结构一致）══════════
+def _dig(payload, path, default=0.0) -> float:
+    cur = payload
+    for p in path:
+        if isinstance(cur, dict) and p in cur:
+            cur = cur[p]
+        else:
+            return float(default)
+    try:
+        return float(cur)
+    except (TypeError, ValueError):
+        return float(default)
+
+
+# (domain, metric) → payload 取值路径（collect.py 写的就是这些字段）
+METRIC_PATHS: dict[tuple, tuple] = {
+    ("devour", "dropped_frames"): ("gaps",),
+    ("queue", "queue_depth"): ("depth", "queued"),
+    ("queue", "oldest_wait_s"): ("wait", "oldest_runnable_age"),
+    ("queue", "dlq_count"): ("depth", "dead"),
+}
+
+
+class SnapshotJsonFeed:
+    """从 body_read_snapshots.payload_json 取真实读数。
+
+    诚实口径：coverage_percent 由索引真实计数推导（clean/(clean+dirty+missing)）；
+    快照不可用（coverage=unavailable）时**不报 0**，而是跳过该 metric（宁缺勿假）。
+    """
+
+    def __init__(self, rules=None, table: str = "body_read_snapshots") -> None:
+        self.rules = list(rules or default_rules())
+        self.table = table
+
+    async def read(self, db) -> list[Reading]:
+        if db is None or not self.rules:
+            return []
+        try:
+            rows = await db.fetch_all(
+                "SELECT domain, payload_json, observed_at FROM " + self.table)
+        except Exception:
+            return []
+        payloads: dict = {}
+        for row in rows or []:
+            r = dict(row)
+            try:
+                payloads[str(r["domain"])] = json.loads(r.get("payload_json") or "{}")
+            except (TypeError, ValueError, json.JSONDecodeError):
+                continue
+        out: list[Reading] = []
+        for rule in self.rules:
+            payload = payloads.get(rule.domain)
+            if not isinstance(payload, dict) or payload.get("coverage") == "unavailable":
+                continue
+            value = None
+            if (rule.domain, rule.metric) in METRIC_PATHS:
+                value = _dig(payload, METRIC_PATHS[(rule.domain, rule.metric)])
+            elif rule.metric == "coverage_percent":
+                idx = payload.get("index") or {}
+                total = (float(idx.get("clean", 0)) + float(idx.get("dirty", 0))
+                         + float(idx.get("missing", 0)))
+                value = (float(idx.get("clean", 0)) / total * 100.0) if total > 0 else None
+            elif rule.metric == "unscanned_pages":
+                value = _dig(payload, ("index", "missing"))
+            elif rule.metric == "unrecoverable_segments":
+                value = _dig(payload, ("unrecoverable",))
+            if value is None:
+                continue
+            out.append(Reading(feed=rule.feed, key=f"{rule.domain}:{rule.metric}",
+                               value=value, level=rule.level_for(value), rule=rule,
+                               evidence={"source": "payload_json"}))
+        return out

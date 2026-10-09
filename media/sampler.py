@@ -5,6 +5,7 @@
 #       对齐时间桶 + ON CONFLICT(ts) DO UPDATE (两后端兼容)
 import time, json, threading
 from senses.sqldialect import txn
+from core.swallow import swallow as _swallow
 
 
 def alias_ph(led):
@@ -106,11 +107,13 @@ class MonitorSampler:
     def serve_forever(self):
         try:
             migrate(self.led)
-        except Exception:
-            pass
+        except Exception as e:
+            _swallow(__file__, e)
+
         while not self._stop.is_set():
             try:
                 self.sample_once()
-            except Exception:
-                pass                     # 采样异常不崩进程
+            except Exception as e:
+                _swallow(__file__, e)
+                     # 采样异常不崩进程
             self._stop.wait(self.interval)

@@ -1,8 +1,8 @@
 {
   "name": "gbt-potato-v9-desktop",
   "productName": "GBT小土豆V9",
-  "version": "0.11.0",
-  "description": "GBT小土豆V9 桌面端 —— 以开源项目 Octop（便携底座）为基础结构：壳只负责拉起 Octop、健康检查并加载其仪表盘",
+  "version": "0.14.0",
+  "description": "GBT小土豆V9 桌面端 —— 启动即拉起总控台 + 19 个内置页面（3D 蓝图上帝视角 · AI 终端 · APP 多功能对话 · 语音操控中心）+ 原生大脑（统一记忆/生命起源存档/元认知）+ 触手身份金库与自动扩容（防偷懒钩子）+ 工作流调研闸门 + 数字人 32 动作 + 本机麦克风能力（设备协商/离线听写/无麦如实告知）+ 全站按键统一",
   "main": "main.js",
   "private": true,
   "author": "GBT小土豆V9",
@@ -23,11 +23,27 @@
     "extraResources": [
       {
         "from": "resources/octop",
-        "to": "octop"
+        "to": "octop",
+        "filter": [
+          "**/*",
+          "!**/__pycache__",
+          "!**/__pycache__/**",
+          "!**/*.pyc",
+          "!**/*.pyo",
+          "!**/*.tmp"
+        ]
       },
       {
         "from": "resources/octop-seed",
-        "to": "octop-seed"
+        "to": "octop-seed",
+        "filter": [
+          "**/*",
+          "!**/__pycache__",
+          "!**/__pycache__/**",
+          "!**/*.pyc",
+          "!**/*.pyo",
+          "!**/*.tmp"
+        ]
       }
     ],
     "win": {
@@ -35,7 +51,9 @@
       "target": [
         {
           "target": "nsis",
-          "arch": ["x64"]
+          "arch": [
+            "x64"
+          ]
         }
       ]
     },
@@ -46,5 +64,9 @@
       "artifactName": "GBT小土豆V9-Octop-${version}.${ext}",
       "shortcutName": "GBT小土豆V9"
     }
+  },
+  "devDependencies": {
+    "electron": "^43.3.0",
+    "electron-builder": "^26.0.12"
   }
 }

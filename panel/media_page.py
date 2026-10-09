@@ -21,9 +21,7 @@ table{width:100%;border-collapse:collapse;font-size:12px;margin-top:6px}
 th,td{padding:5px 8px;border-bottom:1px solid #24334a;text-align:left}
 th{color:#7f8db3;font-weight:600}
 tr.click{cursor:pointer}tr.click:hover{background:#16203a}
-button{background:#1b2440;color:#cfe0ff;border:1px solid #24334a;border-radius:8px;
-  padding:5px 10px;font-size:12px;cursor:pointer}
-button.on{background:#12303f;border-color:#39d0ff;color:#39d0ff}
+/* 按键统一在 skills/ui_design（旧的本地 button / button.on 已删：那个"选中"态由 .btn.on 承担） */
 #tools{display:flex;gap:8px;padding:0 20px 6px;flex-wrap:wrap;align-items:center}
 #drawer{position:fixed;top:0;right:0;height:100vh;width:min(560px,94vw);background:#0d1524;
   border-left:1px solid #39d0ff;transform:translateX(100%);transition:transform .2s;
@@ -32,6 +30,18 @@ button.on{background:#12303f;border-color:#39d0ff;color:#39d0ff}
 pre{background:#0a1120;border:1px solid #24334a;border-radius:8px;padding:8px;font-size:11px;
   overflow:auto;max-height:220px}
 </style></head><body>
+<!-- 统一导航：三个页面都要在（V9 自己的页 + Octop 原生台），一个都不丢 -->
+<div style="margin:8px 0;padding:8px 12px;border:1px solid #1f2b36;border-radius:8px;
+     background:#0f1620;font-size:13px">
+  <b>导航</b>
+  <a href="/" style="color:#3fb950;text-decoration:none;margin-left:8px">▣ 总控台</a> ·
+  <a href="/capability" style="color:#58a6ff;text-decoration:none">▦ 总能力/连接</a> ·
+  <a href="/cloud" style="color:#58a6ff;text-decoration:none">☁ 云插件</a> ·
+  <a href="/db" style="color:#58a6ff;text-decoration:none">▤ 数据库</a> ·
+  <a href="/media" style="color:#3fb950;text-decoration:none">▤ 媒体监控</a> ·
+  <a href="/digital-human" style="color:#58a6ff;text-decoration:none">☺ 数字人</a> ·
+  <a href="/docs" style="color:#8b949e;text-decoration:none">⌘ API 文档</a>
+</div>
 <h1>🎞 GBT小土豆V9 · 生成队列监控
   <a href="/">← 回总控台</a></h1>
 

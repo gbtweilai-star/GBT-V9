@@ -3,6 +3,7 @@
 #
 # 链路: 浏览器麦克风分段 → ASR 转写 → 字幕上屏 → 主脑 → TTS 回放
 # 约束: 麦克风需 localhost 或 HTTPS + 用户授权; 不落原始音频
+from core.swallow import swallow as _swallow
 import asyncio, json, base64
 from fastapi import WebSocket, WebSocketDisconnect
 
@@ -36,8 +37,8 @@ class TalkSession:
                     await ws.send_json({"type": "subtitle", "who": "ai", "text": reply})
                     audio = await asyncio.to_thread(self._tts, reply)
                     await ws.send_json({"type": "speak", "audio": audio})
-        except WebSocketDisconnect:
-            pass
+        except WebSocketDisconnect as e:
+            _swallow(__file__, e)
 
     def _asr(self, b64):
         from senses.voice import _post

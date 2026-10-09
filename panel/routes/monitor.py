@@ -6,6 +6,7 @@
 #   GET /api/monitor/db-health   账本与库健康（真读数：迁移版本/证据行数/库体积）
 #   GET /api/media/queue?limit=N 媒体任务队列快照（表缺失时诚实返回 table_missing=true）
 from __future__ import annotations
+from core.swallow import swallow as _swallow
 
 import os
 from pathlib import Path
@@ -55,8 +56,8 @@ async def db_health() -> dict:
         path = getattr(db, "path", None)
         if path and Path(str(path)).exists():
             out["db_bytes"] = Path(str(path)).stat().st_size
-    except Exception:  # noqa: BLE001
-        pass
+    except Exception as e:
+        _swallow(__file__, e)
     if out.get("schema_version") is None:
         out["ok"] = False
         out["status"] = "degraded"

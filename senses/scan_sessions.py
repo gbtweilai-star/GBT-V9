@@ -7,6 +7,7 @@
 #   - 短任务靠 started_at/ended_at 标记; 存活>interval 才发心跳
 #   - 速率分母 = 该触手会话活跃区间并集(不重复计时, 不拿采集 uptime 冒充)
 #   - 活跃<MIN_ACTIVE 或 关联事件<MIN_EVENTS → 速率给 null(样本不足)
+from core.swallow import swallow as _swallow
 import os, time, uuid, threading
 
 from senses.sqldialect import txn
@@ -108,8 +109,8 @@ class ScanSession:
         while not self._stop.wait(self.interval):
             try:
                 self.beat()
-            except Exception:
-                pass
+            except Exception as e:
+                _swallow(__file__, e)
 
     def beat(self, work_units=None):
         if not self.session_id:
@@ -139,8 +140,8 @@ class ScanSession:
                 r = cur.fetchone()
                 if r and now - float(r[0]) >= self.interval:
                     self.beat()
-        except Exception:
-            pass
+        except Exception as e:
+            _swallow(__file__, e)
 
     def __exit__(self, exc_type, exc, tb):
         self._stop.set()
@@ -152,8 +153,8 @@ class ScanSession:
                     ended_at={ph}, end_reason={ph} WHERE session_id={ph}""",
                     ("closed" if exc_type is None else "interrupted",
                      now, reason, self.session_id))
-        except Exception:
-            pass
+        except Exception as e:
+            _swallow(__file__, e)
         self.session_id = None
         return False
 

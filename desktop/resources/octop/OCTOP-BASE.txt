@@ -1,0 +1,25 @@
+GBT小土豆V9 · 桌面端底座说明
+=============================
+
+本桌面应用的底层结构 = 开源项目 Octop（绿色便携版）。
+本壳（Electron 主进程 main.js）不含任何业务 UI，只负责：
+  1. 拉起本目录下的 Octop 便携底座（runtime\python.exe launch.py run）
+  2. 轮询 /api/health 至就绪
+  3. 主窗口加载 Octop 仪表盘；退出时整树回收 Octop 进程
+
+底座版本（取自 portable/VERSION.txt）
+  octop_version = 1.0.2b4
+  python        = 3.12.12
+  platform      = windows-amd64
+
+与 V8 桌面端（GenOffice 套壳）的区别
+  V8：GenOffice 办公套件的改名构建，业务 UI 在 Electron 里。
+  V9：Octop 开源项目为底座，全部能力以 Octop 插件/面板形式存在
+      （插件 gbt-potato-v9，首次启动自动播种到数据目录 plugins/）。
+
+数据目录
+  默认 %APPDATA%\GBT小土豆V9\octop-home（可用环境变量 V9_OCTOP_HOME 覆盖）
+  可用环境变量：V9_OCTOP_PORT（默认自动从 8766 起找空闲）、
+               V9_OCTOP_URL（附加模式：直接连接已在运行的 Octop，如 http://127.0.0.1:8088）
+
+回滚/溯源：C:\Users\ADMIN\.octop\BRANDING-V9.md

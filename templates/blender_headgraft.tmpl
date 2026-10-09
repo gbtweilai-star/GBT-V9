@@ -1,0 +1,358 @@
+# GBT小土豆V9 · 头部嫁接模板：把"精细头部"模型对接到"已绑骨的身体"上，再走影棚渲染
+# dev: 自由的风 · 本署名不可删除、不可篡改归属
+#
+# 为什么需要这一步（2026-10-07）：
+#   整身模型是从**低分辨率正视图**重建的（原图正视图只有 ~194px 宽），脸部偏软；
+#   而原图里那张**大头特写**分辨率高得多。于是单独用特写生成一个"精细头部"，再把它
+#   按颈部切开、对齐、**挂到身体骨架的头骨**上（bone parenting，不破坏原有绑骨），
+#   渲染出来的脸就细了。
+#
+# 关键点（都会真踩）：
+#   · 头部模型是"连肩半身"，直接放上去会多出一层肩膀 → 必须在颈部**bisect 切掉下半**；
+#   · 缩放/定位都按**顶点分位数**算（网格常有游离顶点，min/max 会把包围盒撑坏）；
+#   · 挂头骨用 parent_type='BONE'（跟随头动），不是普通父子。
+
+import bpy, math, os
+from mathutils import Vector
+
+BODY = r"__BODY__"
+HEAD = r"__HEAD__"
+OUT_DIR = r"__OUT_DIR__"
+LABEL = "__LABEL__"
+W, H = __W__, __H__
+ANGLES = __ANGLES__
+
+bpy.ops.wm.read_factory_settings(use_empty=True)
+scene = bpy.context.scene
+try:
+    scene.render.engine = "BLENDER_EEVEE_NEXT"
+except Exception:
+    scene.render.engine = "BLENDER_EEVEE"
+try:
+    scene.eevee.taa_render_samples = 64
+    scene.eevee.use_raytracing = True
+except Exception:
+    pass
+scene.render.resolution_x, scene.render.resolution_y = W, H
+try:
+    scene.view_settings.view_transform = "AgX"
+    scene.view_settings.look = "AgX - Medium Contrast"
+    scene.view_settings.exposure = 0.25
+except Exception:
+    pass
+
+world = bpy.data.worlds.new("W"); world.use_nodes = True
+nt = world.node_tree
+for n in list(nt.nodes):
+    if n.type != "OUTPUT_WORLD":
+        nt.nodes.remove(n)
+out = [n for n in nt.nodes if n.type == "OUTPUT_WORLD"][0]
+bg = nt.nodes.new("ShaderNodeBackground")
+bg.inputs["Color"].default_value = (0.16, 0.17, 0.21, 1.0)
+bg.inputs["Strength"].default_value = 0.35
+nt.links.new(bg.outputs["Background"], out.inputs["Surface"])
+scene.world = world
+
+
+def xform(ob, M):
+    """直接对世界矩阵左乘：glTF 导入的对象常带父级变换，用 ob.location 加减不是世界位移（踩过）。"""
+    ob.matrix_world = M @ ob.matrix_world
+    bpy.context.view_layer.update()
+
+
+def scale_about(ob, factor, pivot):
+    from mathutils import Matrix as _M
+    return _M.Translation(pivot) @ _M.Scale(factor, 4) @ _M.Translation(-pivot)
+
+
+def rotate_about(ob, deg, axis, pivot):
+    from mathutils import Matrix as _M
+    R = _M.Rotation(math.radians(deg), 4, axis)
+    return _M.Translation(pivot) @ R @ _M.Translation(-pivot)
+
+
+def cut_plane(ob, z_world):
+    """把"世界 z 平面"换算到物体局部空间（bisect 的 plane_co/no 用的是局部坐标，踩过）。"""
+    mwi = ob.matrix_world.inverted()
+    co = mwi @ Vector((0.0, 0.0, z_world))
+    no = (mwi.to_3x3() @ Vector((0.0, 0.0, 1.0))).normalized()
+    return co, no
+
+
+def robust(vals, lo=0.004, hi=0.996):
+    vals = sorted(vals)
+    n = len(vals)
+    return vals[max(0, int(n*lo))], vals[min(n-1, int(n*hi))]
+
+
+def eval_pts(objs):
+    """**求值后**的世界坐标（带修改器/蒙皮的真实渲染位置）——落点判断必须用它。"""
+    dg = bpy.context.evaluated_depsgraph_get()
+    out = []
+    for ob in objs:
+        ev = ob.evaluated_get(dg)
+        me = ev.to_mesh()
+        mw = ob.matrix_world
+        out.extend([mw @ v.co for v in me.vertices])
+        ev.to_mesh_clear()
+    return out
+
+
+def world_pts(objs):
+    pts = []
+    for ob in objs:
+        mw = ob.matrix_world
+        for v in ob.data.vertices:
+            pts.append(mw @ v.co)
+    return pts
+
+
+def bounds(pts):
+    xl, xh = robust([p.x for p in pts])
+    yl, yh = robust([p.y for p in pts])
+    zl, zh = robust([p.z for p in pts])
+    return (xl, xh, yl, yh, zl, zh)
+
+
+# ── 导入身体（已绑骨） ──
+bpy.ops.import_scene.gltf(filepath=BODY)
+body_meshes = [o for o in scene.objects if o.type == "MESH"]
+body_arms = [o for o in scene.objects if o.type == "ARMATURE"]
+if not body_meshes or not body_arms:
+    raise SystemExit("身体模型缺网格或骨架：%s" % BODY)
+bp = world_pts(body_meshes)
+bxl, bxh, byl, byh, bzl, bzh = bounds(bp)
+bhigh = bzh - bzl
+cx = (bxl+bxh)/2.0
+cy = (byl+byh)/2.0
+# 正面方向：脚尖朝前（比"头后头发更重"稳，戴兔耳时尤其）
+foot = [p for p in bp if p.z < bzl + bhigh*0.06]
+yb_foot = sum(p.y for p in foot)/max(1, len(foot))
+FRONT = Vector((0.0, 1.0 if yb_foot >= cy else -1.0, 0.0))
+print("身体: 高 %.3f 正面 y=%s" % (bhigh, FRONT.y))
+
+# ── 找"颅顶"：自顶向下按 1% 高度切片看宽度 —— 兔耳很窄，会在剖面里自己掉出去 ──
+def skull_top(pts, z_top, z_bot, h):
+    lo, hi = z_top - h*0.30, z_top
+    widest = 0.0
+    for k in range(30):
+        a = lo + (hi-lo)*k/30.0
+        b = lo + (hi-lo)*(k+1)/30.0
+        sl = [q for q in pts if a <= q.z < b]
+        if len(sl) < 5:
+            continue
+        w = max(q.x for q in sl) - min(q.x for q in sl)
+        widest = max(widest, w)
+    if widest <= 0:
+        return z_top - h*0.12
+    for k in range(30):                     # 从下往上找第一段"够宽"的
+        a = lo + (hi-lo)*k/30.0
+        b = lo + (hi-lo)*(k+1)/30.0
+        sl = [q for q in pts if a <= q.z < b]
+        if len(sl) < 5:
+            continue
+        w = max(q.x for q in sl) - min(q.x for q in sl)
+        if w > widest*0.55:
+            return b
+    return z_top - h*0.12
+
+
+st = skull_top(bp, bzh, bzl, bhigh)
+head_h = bhigh * 0.125                      # 头高≈身高 1/8
+print("颅顶 z=%.3f（模型顶 z=%.3f）目标头高=%.3f" % (st, bzh, head_h))
+# 身体在颅顶附近的前后/左右中心（作为头部落点）
+# 颈部中轴：颅顶下方最窄的一段（脖子）——用它对齐，比包围盒中心稳（新头带长发、身体头又侧转）
+best_w, bcx, bcy = 1e9, (bxl+bxh)/2.0, (byl+byh)/2.0
+for k in range(24):
+    a = st - head_h*(0.10 + 0.12*k/24.0)
+    b = st - head_h*(0.10 + 0.12*(k+1)/24.0)
+    sl = [q for q in bp if b <= q.z < a]
+    if len(sl) < 5:
+        continue
+    w = max(q.x for q in sl) - min(q.x for q in sl)
+    if w < best_w:
+        best_w = w
+        bcx = (max(q.x for q in sl)+min(q.x for q in sl))/2.0
+        bcy = (max(q.y for q in sl)+min(q.y for q in sl))/2.0
+        neck_z = (a + b) / 2.0
+print("颈部中轴: x=%.3f y=%.3f z=%.3f 宽=%.3f" % (bcx, bcy, neck_z, best_w))
+
+# ── 导入精细头部 ──
+bpy.ops.import_scene.gltf(filepath=HEAD)
+head_objs = [o for o in scene.objects if o.type == "MESH" and o not in body_meshes]
+if not head_objs:
+    raise SystemExit("头部模型没导入成功：%s" % HEAD)
+hp = world_pts(head_objs)
+hxl, hxh, hyl, hyh, hzl, hzh = bounds(hp)
+model_h = hzh - hzl
+scale = (head_h * 1.22) / max(1e-6, model_h * 0.55)   # 放大一点：让新头把原来的头完全罩住     # 略放大：盖住原来的头，不留重影
+print("头部模型高=%.3f → 缩放=%.3f" % (model_h, scale))
+for ob in head_objs:
+    ob.select_set(True)
+bpy.context.view_layer.objects.active = head_objs[0]
+_piv = Vector(((hxl+hxh)/2.0, (hyl+hyh)/2.0, (hzl+hzh)/2.0))
+for ob in head_objs:
+    xform(ob, scale_about(ob, scale, _piv))
+bpy.context.view_layer.update()
+# 朝向对齐：头发质量在后面 → 由点云估"面朝方向"，把新头绕**自身原点**转过去
+def facing_yaw(pts, zc, hh):
+    import math as _m
+    sel = [q for q in pts if zc - hh*0.15 <= q.z <= zc + hh*0.55]
+    if len(sel) < 20:
+        return None
+    cx = sum(q.x for q in sel)/len(sel); cy = sum(q.y for q in sel)/len(sel)
+    sxx = sum((q.x-cx)**2 for q in sel); syy = sum((q.y-cy)**2 for q in sel)
+    sxy = sum((q.x-cx)*(q.y-cy) for q in sel)
+    theta = 0.5*_m.atan2(2*sxy, sxx-syy)
+    nx, ny = -_m.sin(theta), _m.cos(theta)
+    proj = [(q.x-cx)*nx + (q.y-cy)*ny for q in sel]
+    return _m.atan2(-ny, -nx) if sum(proj) > 0 else _m.atan2(ny, nx)
+
+yaw_body = facing_yaw([q for q in bp if st - head_h*0.2 <= q.z <= st + head_h*0.9], st, head_h)
+hp_now = world_pts(head_objs)
+hzl_n, hzh_n = min(q.z for q in hp_now), max(q.z for q in hp_now)
+yaw_head = facing_yaw(hp_now, hzl_n + (hzh_n-hzl_n)*0.5, hzh_n-hzl_n)
+print("朝向: 身体=%s 新头=%s" % (None if yaw_body is None else round(math.degrees(yaw_body), 1),
+                                None if yaw_head is None else round(math.degrees(yaw_head), 1)))
+if yaw_body is not None and yaw_head is not None:
+    dyaw = yaw_body - yaw_head + math.pi      # 估计器的符号约定与实际相反，补 180°
+    _pc = Vector(((hxl+hxh)/2.0, (hyl+hyh)/2.0, (hzl+hzh)/2.0))
+    for ob in head_objs:
+        xform(ob, rotate_about(ob, math.degrees(dyaw), "Z", _pc))
+    print("新头已绕自身原点旋转 %.1f°" % math.degrees(dyaw))
+
+# 先在颈部切开新头（保留下颌与脖子），再按**底口中心 ↔ 身体颈部**对齐
+hp2 = eval_pts(head_objs)
+hxl2, hxh2, hyl2, hyh2, hzl2, hzh2 = bounds(hp2)
+cut_z = hzl2 + (hzh2 - hzl2) * 0.30
+for ob in head_objs:
+    bpy.context.view_layer.objects.active = ob
+    ob.select_set(True)
+    bpy.ops.object.mode_set(mode="EDIT")
+    bpy.ops.mesh.select_all(action="SELECT")
+    _co, _no = cut_plane(ob, cut_z)
+    bpy.ops.mesh.bisect(plane_co=_co, plane_no=_no, clear_inner=True, use_fill=True)
+    bpy.ops.object.mode_set(mode="OBJECT")
+    ob.select_set(False)
+hp3 = eval_pts(head_objs)
+hxl3, hxh3, hyl3, hyh3, hzl3, hzh3 = bounds(hp3)
+h_h = hzh3 - hzl3
+bottom = [q for q in hp3 if q.z < hzl3 + h_h*0.08]
+hcx = (max(q.x for q in bottom)+min(q.x for q in bottom))/2.0 if bottom else (hxl3+hxh3)/2.0
+hcy = (max(q.y for q in bottom)+min(q.y for q in bottom))/2.0 if bottom else (hyl3+hyh3)/2.0
+# 颈对颈：新头底口中心 → 身体颈部中轴；稍微上抬一点，让下巴压住原来的下巴
+d = Vector((bcx - hcx, bcy - hcy + FRONT.y*h_h*0.02, (neck_z - h_h*0.03) - hzl3))
+from mathutils import Matrix as _M4
+for ob in head_objs:
+    xform(ob, _M4.Translation(d))
+print("头就位(颈对颈): 位移=(%.3f, %.3f, %.3f)" % (d.x, d.y, d.z))
+
+print("已按颈线切开新头 z=%.3f" % cut_z)
+
+# ── 用**纯几何操作**（bisect）把身体自带的头去掉，再单独保留一份"耳朵" ──
+# 为什么不用删顶点：glTF 导入会给网格加修改器，求值后索引与原始网格对不上（踩过，删错了）
+for ob in body_meshes:
+    bpy.context.view_layer.objects.active = ob
+    ob.select_set(True)
+    bpy.ops.object.mode_set(mode="EDIT")
+    bpy.ops.mesh.select_all(action="SELECT")
+    _co, _no = cut_plane(ob, neck_z + head_h*0.04)
+    bpy.ops.mesh.bisect(plane_co=_co, plane_no=_no, clear_outer=True)   # 去掉头与耳朵
+    bpy.ops.object.mode_set(mode="OBJECT")
+    ob.select_set(False)
+body_pts2 = eval_pts(body_meshes)
+btop = max(q.z for q in body_pts2)
+top_slice = [q for q in body_pts2 if q.z > btop - head_h*0.10]
+bcx = (max(q.x for q in top_slice)+min(q.x for q in top_slice))/2.0
+bcy = (max(q.y for q in top_slice)+min(q.y for q in top_slice))/2.0
+neck_z = btop                                   # 新头就落在这个顶上
+print("身体切后顶面 z=%.3f 中心=(%.3f, %.3f)" % (btop, bcx, bcy))
+
+# 再导入一份身体，只保留"耳朵"那一段（颅顶以上）
+before = set(scene.objects)
+bpy.ops.import_scene.gltf(filepath=BODY)
+ear_objs = [o for o in scene.objects if o.type == "MESH" and o not in before]
+ear_cut = st - head_h * 0.06                       # 颅顶略下一点：保住耳根
+for ob in ear_objs:
+    bpy.context.view_layer.objects.active = ob
+    ob.select_set(True)
+    bpy.ops.object.mode_set(mode="EDIT")
+    bpy.ops.mesh.select_all(action="SELECT")
+    _co, _no = cut_plane(ob, ear_cut)
+    bpy.ops.mesh.bisect(plane_co=_co, plane_no=_no, clear_inner=True)   # 只留上面（耳朵）
+    bpy.ops.object.mode_set(mode="OBJECT")
+    ob.select_set(False)
+print("耳朵已单独保留（切面 z=%.3f），对象数 %d" % (ear_cut, len(ear_objs)))
+# 耳朵跟身体一起动：挂到同一个骨架（可选：静态渲染不挂也行）
+
+# ── 影棚三点光 + 地面（相对正面） ──
+alls = body_meshes + head_objs
+ap = world_pts(alls)
+axl, axh, ayl, ayh, azl, azh = bounds(ap)
+ahigh = azh - azl
+acx = (axl+axh)/2.0
+acy = (ayl+ayh)/2.0
+acz = (azl+azh)/2.0
+Rt = Vector((FRONT.y, -FRONT.x, 0.0))
+sc = max(axh-axl, ahigh)/2.6
+
+
+def light(pos, energy, size, color):
+    ld = bpy.data.lights.new("L", type="AREA")
+    ld.energy = energy; ld.size = size; ld.color = color
+    lo = bpy.data.objects.new("L", ld); lo.location = pos
+    lo.rotation_euler = (Vector((acx, acy, acz)) - Vector(pos)).to_track_quat("-Z", "Y").to_euler()
+    scene.collection.objects.link(lo)
+
+
+light((acx + FRONT.x*2.4*sc + Rt.x*1.7*sc, acy + FRONT.y*2.4*sc + Rt.y*1.7*sc, acz + 1.6*sc),
+      420*sc*sc, 2.2*sc, (1.0, 0.97, 0.93))
+light((acx + FRONT.x*1.7*sc - Rt.x*2.3*sc, acy + FRONT.y*1.7*sc - Rt.y*2.3*sc, acz + 0.5*sc),
+      110*sc*sc, 3.0*sc, (0.92, 0.95, 1.0))
+light((acx - FRONT.x*2.6*sc + Rt.x*0.4*sc, acy - FRONT.y*2.6*sc + Rt.y*0.4*sc, acz + 2.1*sc),
+      300*sc*sc, 1.8*sc, (1.0, 0.99, 1.0))
+bpy.ops.mesh.primitive_plane_add(size=30*sc, location=(acx, acy, azl - 0.02*sc))
+floor = bpy.context.active_object
+fm = bpy.data.materials.new("floor"); fm.use_nodes = True
+fm.node_tree.nodes["Principled BSDF"].inputs["Base Color"].default_value = (0.17, 0.18, 0.22, 1)
+fm.node_tree.nodes["Principled BSDF"].inputs["Roughness"].default_value = 0.7
+floor.data.materials.append(fm)
+
+cam_data = bpy.data.cameras.new("cam")
+cam_data.lens = 62.0
+cam_data.sensor_fit = "VERTICAL"
+cam_data.sensor_height = 24.0
+cam_data.dof.use_dof = True
+cam_data.dof.aperture_fstop = 2.8
+focus = bpy.data.objects.new("focus", None)
+focus.location = (acx, acy, acz)
+scene.collection.objects.link(focus)
+cam_data.dof.focus_object = focus
+cam = bpy.data.objects.new("cam", cam_data)
+scene.collection.objects.link(cam); scene.camera = cam
+DIST = ahigh * 1.12 * cam_data.lens / cam_data.sensor_height
+EL = math.radians(5.0)
+
+
+def place(turn_deg, dist, el=EL, target=None):
+    th = math.radians(turn_deg)
+    dx = FRONT.x*math.cos(th) + Rt.x*math.sin(th)
+    dy = FRONT.y*math.cos(th) + Rt.y*math.sin(th)
+    tx, ty, tz = target or (acx, acy, acz)
+    cam.location = (tx + dx*dist*math.cos(el), ty + dy*dist*math.cos(el), tz + math.sin(el)*dist)
+    cam.rotation_euler = (Vector((tx, ty, tz)) - Vector(cam.location)).to_track_quat("-Z", "Y").to_euler()
+
+
+os.makedirs(OUT_DIR, exist_ok=True)
+place(22.0, DIST)
+scene.render.filepath = OUT_DIR + "/" + LABEL + "_hero.png"
+bpy.ops.render.render(write_still=True)
+for i in range(ANGLES):
+    place(360.0 * i / ANGLES, DIST)
+    scene.render.filepath = OUT_DIR + "/" + LABEL + "_turn%02d.png" % i
+    bpy.ops.render.render(write_still=True)
+head_c = azh - ahigh * 0.11
+place(12.0, DIST*0.30, el=math.radians(2.0), target=(acx, acy, head_c))
+scene.render.filepath = OUT_DIR + "/" + LABEL + "_face.png"
+bpy.ops.render.render(write_still=True)
+print("V9_HEADGRAFT_OK", OUT_DIR, LABEL)

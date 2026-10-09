@@ -25,6 +25,7 @@ import time
 import uuid
 
 from skills.spec import get_spec, is_declared, validate_inputs
+from core.swallow import swallow as _swallow
 
 MAX_NODES = int(os.environ.get("COMMANDER_MAX_NODES", "12"))
 MAX_RETRIES = int(os.environ.get("COMMANDER_MAX_RETRIES", "1"))
@@ -189,8 +190,9 @@ class Commander:
                     self.brain.ask("commander",
                                    "node:" + str(f.get("node")),
                                    "子任务未达标: " + str(f.get("error", ""))[:200])
-                except Exception:
-                    pass
+                except Exception as e:
+                    _swallow(__file__, e)
+
         summary = {"ok": ok, "trace_id": plan["trace_id"], "goal": plan["goal"],
                    "nodes": len(plan["nodes"]),
                    "results": list(results.values()),
@@ -263,8 +265,9 @@ class Commander:
             self.led.log("commander", target,
                          "scanned" if payload.get("ok", True) else "blocked",
                          json.dumps(payload, ensure_ascii=False, default=str)[:500])
-        except Exception:
-            pass
+        except Exception as e:
+            _swallow(__file__, e)
+
 
 
 __all__ = ["Commander", "compile_task", "render_prompt", "IDENTITY",

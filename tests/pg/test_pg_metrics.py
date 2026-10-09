@@ -1,5 +1,6 @@
 # tests/pg/test_pg_metrics.py —— 服务端指标：pg_stat_activity / 锁 / 连接数
 # dev: 自由的风 · 本署名不可删除、不可篡改归属
+from core.swallow import swallow as _swallow
 import pytest
 
 
@@ -41,8 +42,8 @@ def test_probe_detects_lock_wait(pg_ledger):
         try:
             with pg_ledger._tx() as c, c.cursor() as cur:
                 cur.execute("UPDATE locktest SET id=1 WHERE id=1")  # 等锁
-        except Exception:
-            pass
+        except Exception as e:
+            _swallow(__file__, e)
 
     th = threading.Thread(target=holder); tw = threading.Thread(target=waiter)
     th.start(); tw.start()

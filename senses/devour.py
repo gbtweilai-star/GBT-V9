@@ -13,6 +13,7 @@ import threading
 import time
 from dataclasses import dataclass
 from pathlib import Path
+from core.swallow import swallow as _swallow
 
 
 @dataclass
@@ -165,8 +166,9 @@ class Devour:
                 self.ledger.log("t1", f"devour:gaps:{len(missing)}", "vuln",
                                 f"断档 {missing[:5]}",
                                 event_id=f"gap-{int(time.time())}")
-            except Exception:
-                pass
+            except Exception as e:
+                _swallow(__file__, e)
+
         return self.gaps
 
     # ── 缺口修复（原片段语义保留）──

@@ -171,6 +171,27 @@ def test_devour_gap_detected(ledger, tmp_path):
 # ═══════════════════════════════════════════════════════════
 # ⑤ 全链路：真扫出密钥 → 落账 → 吞噬 → 对账
 # ═══════════════════════════════════════════════════════════
+def test_reconciliation_report_names_the_rule_even_with_long_paths(ledger, workdir):
+    """真机教训：目标路径一长，原先把 finding 直接 detail[:200] 会在**规则名之前**
+    被切掉 → 报告只剩一长串路径，看报告的人认不出这是"明文密钥"还是"危险调用"。"""
+    from scan.scan_rules import scan
+    from scan.report import reconciliation_report
+
+    sample = "AK" + "IAIOSFODNN7EXAMPLE"          # 示例密钥按片段拼，不落可误认的字面量
+    deep = workdir / ("p" * 60) / "another-long-segment-name"
+    deep.mkdir(parents=True)
+    secret = deep / "config_with_a_rather_long_file_name.py"
+    secret.write_text('AWS = "' + sample + '"\n')
+    finding = scan(str(secret))
+    assert finding, "长路径下的密钥文件也必须被扫出"
+    ledger.log("t1", str(secret), "vuln", str(finding))
+
+    rep = reconciliation_report(ledger, {str(secret)}, ["t1"], out_path=None)
+    assert "secret_leak" in rep                   # 规则名必须看得见
+    assert "密钥" in rep                           # 说明必须看得见（不被路径挤掉）
+    assert len(str(secret)) > 120                 # 这条路径确实是"长"的那种
+
+
 def test_full_pipeline_secret_scan(ledger, workdir, tmp_path):
     from scan.scanner import enumerate_targets
     from scan.scan_rules import scan

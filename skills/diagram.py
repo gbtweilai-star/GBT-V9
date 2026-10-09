@@ -3,6 +3,7 @@
 # 来源: https://github.com/tt-a1i/archify
 #   支持 Architecture/Workflow/Sequence/DataFlow/Lifecycle
 #   源码图必须带 --repo-root 证据校验; 截图推断的图显式标注"非源码验证"
+from core.swallow import swallow as _swallow
 import os, json, shutil, subprocess, tempfile
 from pathlib import Path
 
@@ -58,8 +59,8 @@ class DiagramSkill:
                 if self.devour:
                     try:
                         self.devour.archive_artifact(str(outp), kind="diagram")
-                    except Exception:
-                        pass
+                    except Exception as e:
+                        _swallow(__file__, e)
             return {"ok": ok, "html": str(outp), "validate": v,
                     "warnings": warnings, "artifacts": arts, "log": log}
 

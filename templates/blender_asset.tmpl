@@ -1,0 +1,169 @@
+# GBT小土豆V9 · Blender 资产渲染模板（把云上生成的 glb 拉进影棚出图）
+# dev: 自由的风 · 本署名不可删除、不可篡改归属
+#
+# 用途：Tripo 图生3D 产出的 glb（可能自带贴图/骨架/动画）→ 用同一套影棚管线渲染
+#   （透视 3/4 机位 + 景深 + 三点光 + 地面接影 + AgX），并绕一圈出转台，供人眼验收。
+# 与 templates/blender_scene.tmpl 的区别：那个是我们自己建的骨架网格；这个吃外部 glb。
+
+import bpy, math, os
+from mathutils import Vector
+
+GLB = r"__GLB__"
+OUT_DIR = r"__OUT_DIR__"
+LABEL = "__LABEL__"
+W, H = __W__, __H__
+ANGLES = __ANGLES__
+FRONT_OFFSET = __FRONT_OFFSET__      # 正面朝向的人工校准角（度）：自动判据偶尔偏 90°，用它纠
+
+bpy.ops.wm.read_factory_settings(use_empty=True)
+scene = bpy.context.scene
+try:
+    scene.render.engine = "BLENDER_EEVEE_NEXT"
+except Exception:
+    scene.render.engine = "BLENDER_EEVEE"
+try:
+    scene.eevee.taa_render_samples = 64
+    scene.eevee.use_raytracing = True
+except Exception:
+    pass
+scene.render.resolution_x, scene.render.resolution_y = W, H
+try:
+    scene.view_settings.exposure = 0.25
+except Exception:
+    pass
+try:
+    scene.view_settings.view_transform = "AgX"
+    scene.view_settings.look = "AgX - Medium Contrast"
+except Exception:
+    scene.view_settings.view_transform = "Standard"
+
+world = bpy.data.worlds.new("W"); world.use_nodes = True
+nt = world.node_tree
+for n in list(nt.nodes):
+    if n.type != "OUTPUT_WORLD":
+        nt.nodes.remove(n)
+out = [n for n in nt.nodes if n.type == "OUTPUT_WORLD"][0]
+bg = nt.nodes.new("ShaderNodeBackground")
+bg.inputs["Color"].default_value = (0.16, 0.17, 0.21, 1.0)
+bg.inputs["Strength"].default_value = 0.35
+nt.links.new(bg.outputs["Background"], out.inputs["Surface"])
+scene.world = world
+
+# ── 导入云上模型 ──
+bpy.ops.import_scene.gltf(filepath=GLB)
+imported = [o for o in scene.objects if o.type in ("MESH", "ARMATURE")]
+meshes = [o for o in scene.objects if o.type == "MESH"]
+if not meshes:
+    raise SystemExit("导入后没有网格：%s" % GLB)
+# 合并包围盒（用世界坐标，glTF 常带缩放/朝向）
+pts = []
+for ob in meshes:                                   # 按**顶点**算包围盒（bound_box 在带骨架时会偏）
+    mw = ob.matrix_world
+    for v in ob.data.vertices:
+        pts.append(mw @ v.co)
+def _robust(vals):
+    """分位数取边界：网格里常有游离顶点，直接用 min/max 会把取景撑坏（人浮在半空）。"""
+    vals = sorted(vals)
+    n = len(vals)
+    lo = vals[max(0, int(n*0.004))]
+    hi = vals[min(n-1, int(n*0.996))]
+    return lo, hi
+
+xs_lo, xs_hi = _robust([p.x for p in pts])
+ys_lo, ys_hi = _robust([p.y for p in pts])
+zs_lo, zs_hi = _robust([p.z for p in pts])
+xs = [xs_lo, xs_hi]; ys = [ys_lo, ys_hi]; zs = [zs_lo, zs_hi]
+wide = max(xs)-min(xs); high = max(zs)-min(zs)
+size = max(wide, high)
+cx = (min(xs)+max(xs))/2.0; cy = (min(ys)+max(ys))/2.0
+zmin, zmax = min(zs), max(zs)
+zc = (zmin+zmax)/2.0
+print("模型包围盒: 宽 %.3f 深 %.3f 高 %.3f 底面 %.3f 顶面 %.3f"
+      % (max(xs)-min(xs), max(ys)-min(ys), max(zs)-min(zs), zmin, zmax))
+
+# 若自带动画，取中间帧（静态渲染也自然）
+acts = [a for a in bpy.data.actions]
+if acts:
+    try:
+        arm = [o for o in scene.objects if o.type == "ARMATURE"][0]
+        arm.animation_data_create()
+        arm.animation_data.action = acts[0]
+        fs, fe = acts[0].frame_range
+        scene.frame_start, scene.frame_end = int(fs), int(fe)
+        scene.frame_set(int((fs+fe)//2))
+    except Exception as e:
+        print("动画设置跳过:", e)
+
+# 正面方向：人头后面有头发体积，用"头部质心"偏向哪边判断背面，正面取其反
+# 正面判定：**脚尖朝前**最可靠（比"头后头发更重"稳；高跟鞋脚尖明显前伸）
+foot_pts = [q for q in pts if q.z < zs_lo + (zs_hi - zs_lo) * 0.06]
+ybar_foot = (sum(q.y for q in foot_pts) / max(1, len(foot_pts))) if foot_pts else cy
+front_sign = 1.0 if ybar_foot >= cy else -1.0
+FRONT = Vector((0.0, front_sign, 0.0))
+print("脚部质心 y=%.3f（模型中心 y=%.3f）→ 正面方向 y=%s" % (ybar_foot, cy, FRONT.y))
+
+# ── 影棚三点光（全部相对"正面"布置）+ 地面 ──
+def light(pos, energy, size, target, color):
+    ld = bpy.data.lights.new("L", type="AREA")
+    ld.energy = energy; ld.size = size; ld.color = color
+    lo = bpy.data.objects.new("L", ld); lo.location = pos
+    lo.rotation_euler = (Vector(target) - Vector(pos)).to_track_quat("-Z", "Y").to_euler()
+    scene.collection.objects.link(lo)
+    return lo
+
+sc = max(wide, high) / 2.6
+F = FRONT                                  # 正面单位向量（XY 平面）
+Rt = Vector((F.y, -F.x, 0.0))              # 右手侧（相对正面）
+key_pos = (cx + F.x*2.4*sc + Rt.x*1.7*sc, cy + F.y*2.4*sc + Rt.y*1.7*sc, zc + 1.6*sc)
+fill_pos = (cx + F.x*1.7*sc - Rt.x*2.3*sc, cy + F.y*1.7*sc - Rt.y*2.3*sc, zc + 0.5*sc)
+rim_pos = (cx - F.x*2.6*sc + Rt.x*0.4*sc, cy - F.y*2.6*sc + Rt.y*0.4*sc, zc + 2.1*sc)
+light(key_pos, 420*sc*sc, 2.2*sc, (cx, cy, zc), (1.0, 0.97, 0.93))
+light(fill_pos, 110*sc*sc, 3.0*sc, (cx, cy, zc), (0.92, 0.95, 1.0))
+light(rim_pos, 300*sc*sc, 1.8*sc, (cx, cy, zc), (1.0, 0.99, 1.0))
+bpy.ops.mesh.primitive_plane_add(size=30*sc, location=(cx, cy, zs_lo - 0.02*sc))
+floor = bpy.context.active_object
+fm = bpy.data.materials.new("floor"); fm.use_nodes = True
+fm.node_tree.nodes["Principled BSDF"].inputs["Base Color"].default_value = (0.17, 0.18, 0.22, 1)
+fm.node_tree.nodes["Principled BSDF"].inputs["Roughness"].default_value = 0.7
+floor.data.materials.append(fm)
+
+# ── 相机：透视 + 景深，绕"正面"公转 ──
+cam_data = bpy.data.cameras.new("cam")
+cam_data.lens = 62.0
+cam_data.sensor_fit = "VERTICAL"
+cam_data.sensor_height = 24.0
+cam_data.dof.use_dof = True
+cam_data.dof.aperture_fstop = 2.8
+focus = bpy.data.objects.new("focus", None)
+focus.location = (cx, cy, zc)
+scene.collection.objects.link(focus)
+cam_data.dof.focus_object = focus
+cam = bpy.data.objects.new("cam", cam_data)
+scene.collection.objects.link(cam); scene.camera = cam
+DIST = (zs_hi - zs_lo) * 1.12 * cam_data.lens / cam_data.sensor_height
+EL = math.radians(5.0)
+
+def place(turn_deg, dist, el=EL, target=None, lift=0.0):
+    th = math.radians(turn_deg + FRONT_OFFSET)      # 加上人工校准角
+    dx = F.x*math.cos(th) + Rt.x*math.sin(th)      # 0° = 正对正面
+    dy = F.y*math.cos(th) + Rt.y*math.sin(th)
+    tx, ty, tz = target or (cx, cy, zc + lift)
+    cam.location = (tx + dx*dist*math.cos(el), ty + dy*dist*math.cos(el),
+                    tz + math.sin(el)*dist)
+    cam.rotation_euler = (Vector((tx, ty, tz)) - Vector(cam.location)).to_track_quat(
+        "-Z", "Y").to_euler()
+
+os.makedirs(OUT_DIR, exist_ok=True)
+place(22.0, DIST)
+scene.render.filepath = OUT_DIR + "/" + LABEL + "_hero.png"
+bpy.ops.render.render(write_still=True)
+for i in range(ANGLES):
+    place(360.0 * i / ANGLES, DIST)
+    scene.render.filepath = OUT_DIR + "/" + LABEL + "_turn%02d.png" % i
+    bpy.ops.render.render(write_still=True)
+# 头部特写：取上部 24% 高度，正前方略偏
+head_c = zs_hi - (zs_hi - zs_lo) * 0.12
+place(12.0, DIST * 0.30, el=math.radians(2.0), target=(cx, cy, head_c))
+scene.render.filepath = OUT_DIR + "/" + LABEL + "_face.png"
+bpy.ops.render.render(write_still=True)
+print("V9_ASSET_OK", OUT_DIR, LABEL)

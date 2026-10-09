@@ -1,5 +1,6 @@
 # panel/server.py —— 触手总控面板 + 回放端 · dev: 自由的风
 # 一键预览 / 勾选导出 / 状态看板 / 缓存管理
+from core.swallow import swallow as _swallow
 import os, re, json, sqlite3, time, uuid, shutil, threading, subprocess, asyncio
 from pathlib import Path
 from typing import Optional
@@ -20,7 +21,9 @@ REAPER = default_reaper(FRAME_DIR)      # 自动回收：超限清最旧（LRU +
 JOBS: dict[str, dict] = {}          # job_id -> {status,file,error,ts,segs}
 _lock = threading.Lock()
 
-app = FastAPI(title="GBT小土豆V9 · 总控台")
+# 全内置纪律：关掉 FastAPI 自带的 /docs 与 /redoc（它们从 CDN 拉 swagger 资源 = 外链），
+# 由本服务自己渲染一份内置接口文档页（见下方 builtin_docs）。
+app = FastAPI(title="GBT小土豆V9 · 总控台", docs_url=None, redoc_url=None)
 
 # ────────── 段 → 浏览器可播的 MP4（按需转码 + 缓存） ──────────
 def preview_mp4(seg: Segment) -> Optional[Path]:
@@ -109,8 +112,9 @@ def _log_blocked(detail: str) -> None:
         return
     try:
         led.log("panel", f"backend:{backend_info()['backend']}", "blocked", detail[:200])
-    except Exception:
-        pass
+    except Exception as e:
+        from core import swallow as _sw; _sw.swallow(__file__, e)
+
 
 
 @app.get("/api/health")
@@ -129,6 +133,29 @@ def api_health():
     out["witness_probe"] = os.environ.get("BODY_WITNESS_PROBE", "1") != "0" and \
         getattr(app.state, "witness_probe_task", None) is not None
     out["collect"] = getattr(app.state, "collect_task", None) is not None
+    # 身体服务分项状态：哪一块没起、为什么 —— /api/health 直接看得到（别再"看着绿其实没跑"）
+    parts = getattr(app.state, "body_services", None) or {}
+    out["body_parts"] = {k: bool(v.get("ok")) for k, v in parts.items()}
+    if parts:
+        out["body_missing"] = [k for k, v in parts.items() if not v.get("ok")]
+    return out
+
+
+@app.get("/api/octop/health")
+def api_octop_health():
+    """同源探活 Octop 底座（8766）：浏览器直连会吃 CORS，改由服务端探。
+
+    这是**固定**的本机端口（不是用户传入的 URL），只做健康读数，不代理任何请求体。
+    """
+    import socket
+    port = int(os.environ.get("OCTOP_PORT", "8766"))
+    out = {"port": port, "up": False}
+    try:
+        with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+            s.settimeout(1.5)
+            out["up"] = s.connect_ex(("127.0.0.1", port)) == 0
+    except Exception as exc:                                  # noqa: BLE001
+        out["error"] = type(exc).__name__
     return out
 
 
@@ -172,8 +199,9 @@ def api_backend():
             p = _P(os.environ.get("LEDGER_DB", "tentacle_ledger.db"))
             out["sqlite"] = {"path": str(p),
                              "size_mb": round(p.stat().st_size / 1048576, 2) if p.exists() else 0}
-        except Exception:
-            pass
+        except Exception as e:
+            from core import swallow as _sw; _sw.swallow(__file__, e)
+
 
     out["alert"] = bool(alert_reasons)
     out["alert_reasons"] = alert_reasons
@@ -210,11 +238,47 @@ def api_scale():
                      "size_mb": round(p.stat().st_size / 1048576, 2) if p.exists() else 0}
             with led._tx() as c:
                 local["rows"] = c.execute("SELECT COUNT(*) FROM ledger").fetchone()[0]
-        except Exception:
-            pass
-        return {"enabled": False, "backend": "sqlite",
-                "reason": "扩容监控仅 PG 后端支持（SQLite 走表级归档/文件轮转）",
-                "local": local}
+        except Exception as e:
+            from core import swallow as _sw; _sw.swallow(__file__, e)
+
+        # SQLite 也把「斜率/耗尽预测/控制器」算出来（以前这三格是"—"，看着像没做）
+        try:
+            from audit import scale_sqlite as _ss
+            _ss.sample(led, rows=local.get("rows"))          # 每次看面板就采一次样
+            raw = _ss.read(led)
+            # 面板那三格读的是 growth/used_gb/capacity_gb/daemon —— 这里必须**对齐字段名**，
+            # 否则 SQLite 后端会显示 "undefinedGB / 无记录"（看着像没做，其实是名字对不上）。
+            mb_day = raw.get("growth_mb_day")
+            cap_mb = raw.get("cap_mb") or 0
+            samples = raw.get("samples") or 0
+            ctrl = raw.get("controller")
+            ctrl_zh = {"ok": "正常", "watch": "观察中", "act": "需动作"}.get(str(ctrl), str(ctrl or "—"))
+            age = raw.get("sample_age_sec")
+            return {"enabled": True, "backend": "sqlite", "local": local,
+                    "used_pct": raw.get("used_pct"),
+                    "used_gb": round((raw.get("size_mb") or 0) / 1024, 3),
+                    "capacity_gb": round(cap_mb / 1024, 1),
+                    "cap_source": raw.get("cap_source"),
+                    "conn_pct": None,
+                    "sample_age_sec": (round(age, 1) if isinstance(age, (int, float)) else None),
+                    "growth": ({"gb_day": round((mb_day or 0) / 1024, 4),
+                                "mb_hour": round((mb_day or 0) / 24, 3)}
+                               if mb_day is not None else None),
+                    "eta_days": raw.get("eta_days"),
+                    "controller": ctrl, "controller_why": raw.get("controller_why"),
+                    "daemon": {"online": True,
+                               "state": "SQLite · 控制器" + ctrl_zh,
+                               "spec": "按设计不自动 resize（表级归档 + 文件轮转）",
+                               "resizes_month": 0, "cooldown_sec": 0,
+                               "heartbeat_age": (round(age, 1) if isinstance(age, (int, float)) else 0),
+                               "protect": ctrl == "act"},
+                    "partitions": {}, "audit": [],
+                    "warnings": ([] if samples >= 2 else [f"样本 {samples} 条（需≥2条才算斜率）"]),
+                    "reason": raw.get("reason", ""),
+                    "note": "SQLite 后端：体量采样 + 斜率/ETA/控制器均为真读数"}
+        except Exception as exc:                              # noqa: BLE001
+            return {"enabled": False, "backend": "sqlite", "local": local,
+                    "reason": f"SQLite 扩容读数失败：{type(exc).__name__}"}
 
     out = {"enabled": True, "backend": "pg", "ts": _time.time(), "warnings": []}
     with txn(led) as cur:
@@ -327,13 +391,17 @@ def api_senses():
                 return None
 
         rows = _q("SELECT status, COUNT(*) FROM mic_segments GROUP BY status")
-        out["mic"] = {k: v for k, v in rows} if rows is not None else {"table": "未建（麦克风未启用过）"}
+        # 表不存在 ≠ 通道没建：听写通道是本机 SAPI（见 out["asr"]），这条只是**历史计数**。
+        out["mic"] = {k: v for k, v in rows} if rows is not None else {}
+        if rows is None:
+            out["mic_note"] = "还没有转写记录（点卡片上的「试转写」即可产生第一条）"
         ev = _q("SELECT kind, COUNT(*) FROM mic_events GROUP BY kind")
         if ev is not None:
             out["mic_events"] = {k: v for k, v in ev}
-
         vrows = _q("SELECT status, COUNT(*) FROM voice_jobs GROUP BY status")
-        out["voice"] = {k: v for k, v in vrows} if vrows is not None else {"table": "未建（语音未启用过）"}
+        out["voice"] = {k: v for k, v in vrows} if vrows is not None else {}
+        if vrows is None:
+            out["voice_note"] = "还没有配音记录（说通道就绪：本机 SAPI 台湾腔）"
 
         for scanner, key in (("pulse", "pulse"), ("codex", "codex"), ("coder", "coder"),
                              ("part-mgr", "partition"), ("scale", "scale"), ("panel", "panel")):
@@ -345,6 +413,11 @@ def api_senses():
         out["codex"] = {"available": av.ok, "detail": av.reason}
     except Exception as e:  # noqa: BLE001
         out["codex"] = {"available": False, "detail": f"{type(e).__name__}: {e}"}
+    try:
+        from senses import voice_sapi as VS          # 免费离线听写通道（带 TTL 缓存，轮询不拖机器）
+        out["asr"] = VS.asr_status()
+    except Exception as e:  # noqa: BLE001
+        out["asr"] = {"可用": False, "说明": f"{type(e).__name__}: {e}"}
     out["brain"] = {"gateway": bool(os.environ.get("OPENAI_BASE_URL")),
                     "ollama": bool(os.environ.get("OLLAMA_HOST"))}
     return out
@@ -419,6 +492,62 @@ def download(job_id: str):
     if not p.exists(): raise HTTPException(404, "文件已丢失")
     return FileResponse(p, filename=p.name)
 
+
+# ── 品牌 Logo / favicon（全站网页与浏览器标签都补上主人给的 Logo）──
+_LOGO_PNG = Path(__file__).resolve().parent / "static" / "logo.png"
+_LOGO_ICO = Path(__file__).resolve().parent / "static" / "favicon.ico"
+
+
+def _builtin_docs_html() -> str:
+    """内置接口文档：从本服务自己的 OpenAPI 生成，不引任何外部资源（不外链）。"""
+    spec = app.openapi() or {}
+    rows = []
+    for path, item in sorted((spec.get("paths") or {}).items()):
+        for method, op in sorted((item or {}).items()):
+            if method.lower() not in ("get", "post", "put", "delete", "patch"):
+                continue
+            rows.append(
+                f'<tr><td class=num><b>{method.upper()}</b></td><td><code>{path}</code></td>'
+                f'<td class=muted>{(op or {}).get("summary") or (op or {}).get("operationId") or ""}'
+                f'</td></tr>')
+    title = spec.get("info", {}).get("title", "GBT小土豆V9")
+    # 本页以前**自带一套 GitHub-dark 调色板**、绕过统一注入 —— 全站唯一一处"不在体系里"的页面。
+    # 现在只留结构，视觉交给 skins.ui_design（统一 token + 导航 + 按键），颜色不再硬编码。
+    html = ("<!doctype html><html lang=zh-CN><head><meta charset=utf-8>"
+            "<link rel=icon href=/favicon.ico><title>API 文档（内置）</title></head><body>"
+            f"<h1>{title} · 接口文档（全内置，无外链资源）</h1>"
+            f"<p class=muted>接口数 {len(rows)} · 原始 schema：<a href=/openapi.json>"
+            "/openapi.json</a> · 回 <a href=/>总控台</a></p>"
+            "<table><thead><tr><th>方法</th><th>路径</th><th>说明</th></tr></thead>"
+            f"<tbody>{''.join(rows)}</tbody></table></body></html>")
+    try:
+        from skills.ui_design import inject
+        return inject(html, "/docs")
+    except Exception:                                         # noqa: BLE001
+        return html
+
+
+@app.get("/docs", response_class=HTMLResponse)
+def builtin_docs():
+    return _builtin_docs_html()
+
+
+@app.get("/logo.png")
+def brand_logo():
+    if not _LOGO_PNG.is_file():
+        raise HTTPException(404, "Logo 资源缺失")
+    return FileResponse(_LOGO_PNG, media_type="image/png",
+                        headers={"Cache-Control": "public, max-age=3600"})
+
+
+@app.get("/favicon.ico")
+def brand_favicon():
+    src = _LOGO_ICO if _LOGO_ICO.is_file() else _LOGO_PNG
+    if not src.is_file():
+        raise HTTPException(404, "favicon 资源缺失")
+    return FileResponse(src, media_type="image/x-icon" if src.suffix == ".ico" else "image/png",
+                        headers={"Cache-Control": "public, max-age=3600"})
+
 @app.get("/api/cache")
 def cache_status():
     """缓存状态：双目录预算 + 当前占用 + 最近一次回收读数。"""
@@ -438,9 +567,18 @@ def _disk_pct(p: Path) -> float:
     except Exception: return 0.0
 
 # ────────── 面板页面 ──────────
+def _dock(html: str, current: str = "/") -> str:
+    """给任何页面注入统一导航 + AI 停靠坞（AI 穿透所有页面）。失败不改坏原页面。"""
+    try:
+        from skills.ui_design import inject
+        return inject(html, current)
+    except Exception:                                          # noqa: BLE001
+        return html
+
+
 @app.get("/", response_class=HTMLResponse)
 def page():
-    return PAGE
+    return _dock(PAGE, "/")
 
 PAGE = """<!doctype html><html lang=zh><meta charset=utf-8>
 <title>GBT小土豆V9 · 总控台</title>
@@ -453,18 +591,59 @@ PAGE = """<!doctype html><html lang=zh><meta charset=utf-8>
  table{width:100%;border-collapse:collapse;margin-top:8px}
  th,td{border-bottom:1px solid #21262d;padding:7px;text-align:left;font-size:13px}
  th{color:#8b949e;font-weight:500}
- button{background:#21262d;color:#c9d1d9;border:1px solid #30363d;border-radius:6px;
-        padding:5px 11px;cursor:pointer;font-family:inherit}
- button:hover{background:#30363d}button:disabled{opacity:.4;cursor:not-allowed}
- .prim{background:#238636;border-color:#2ea043}.prim:hover{background:#2ea043}
+ /* 按键/标签样式统一在 skills/ui_design（这里不再另写一套；旧的 button/.prim 已删） */
  video{width:100%;max-height:360px;background:#000;border-radius:6px;margin-top:8px}
- .pill{padding:1px 7px;border-radius:10px;font-size:11px;border:1px solid #30363d}
  .bar{height:6px;background:#21262d;border-radius:3px;overflow:hidden;margin-top:6px}
  .bar>i{display:block;height:100%;background:#238636}
  #toast{position:fixed;right:20px;bottom:20px;background:#161b22;border:1px solid #30363d;
         padding:10px 16px;border-radius:8px;display:none}
 </style>
 <h2>GBT小土豆V9 · 总控台 <span class=muted id=ts></span></h2>
+
+<!-- 导航只留一份：统一导航（inject 注入的 nav.top，带分组与胶囊样式）。
+     这里原先还有一条手写"导航"条 —— 与统一导航重复，样式各写各的，页面上看着就是两排。 -->
+<span class=muted id=octopstate style="font-size:12px"></span>
+
+<!-- 触手编队 + 只读工具快照（之前只有 API，现在上台面） -->
+<div class=card id=fleetcard><b>触手编队 · 统一密钥 · 只读工具快照</b>
+  <span class=muted id=fleetstate>加载中…</span>
+  <div id=fleetbody></div>
+</div>
+<script>
+async function tickFleet(){
+  var el=document.getElementById('fleetbody'), st=document.getElementById('fleetstate');
+  try{
+    var f=await (await fetch('/api/fleet/status')).json();
+    var d=await (await fetch('/api/body/snapshots')).json();
+    var c=f.config||{}, r=f.drives||{};
+    var rows='<div class=row><div class=card><div class=muted>编队规模</div>'+
+      '<b class="'+((c.n>=100)?'g':'y')+'">'+(c.n||0)+' 根</b>'+
+      '<div class=muted>角色 '+(c.roles?Object.keys(c.roles).length:0)+' 类 · 指挥官 '+(c.commander||'-')+'</div></div>'+
+      '<div class=card><div class=muted>统一密钥（只显指纹）</div>'+
+      '<b>'+(c.key_id||'未配置')+'</b><div class=muted>来源 '+(c.key_source||'-')+' · '+
+      (c.same_key?'<span class=g>全编队同一把</span>':'<span class=r>不统一</span>')+'</div></div>'+
+      '<div class=card><div class=muted>驱动审计</div><b>'+(r.drives||0)+' 次</b>'+
+      '<div class=muted>用过 '+(r.tentacles_used||0)+' 根 · tokens '+(r.tokens||0)+'</div></div></div>';
+    var tools='<table><tr><th>只读工具</th><th>域</th><th>快照版本</th><th>安全句（它自己说的话）</th></tr>';
+    for(var k in d){var v=d[k]||{};
+      tools+='<tr><td>'+k+'</td><td>'+(v.domain||'-')+'</td><td class="'+(v.stale?'y':'g')+'">'+
+        (v.revision==null?'-':('#'+v.revision))+(v.stale?' ⚠过期':'')+'</td><td class=muted>'+
+        ((v.safe_sentence||'').slice(0,72))+'</td></tr>';}
+    tools+='</table>';
+    el.innerHTML=rows+tools;
+    st.textContent='';
+  }catch(e){ st.textContent='（编队/工具面读不到：'+e.message+'）'; }
+}
+async function tickOctop(){
+  var el=document.getElementById('octopstate');
+  try{ var j=await (await fetch('/api/octop/health',{cache:'no-store'})).json();
+    el.innerHTML = j.up ? ' <span class=g>● 底座在跑（端口 '+j.port+'）</span>'
+                        : ' <span class=y>● 底座未运行（点左边链接会尝试拉起）</span>';
+  }catch(e){ el.innerHTML=' <span class=muted>● 底座状态未知</span>'; }
+}
+tickFleet(); setInterval(tickFleet, 15000);
+tickOctop(); setInterval(tickOctop, 10000);
+</script>
 
 <div class=card id=backendcard>
   <b>账本后端</b> <span class=muted>· 连接健康度 · 池快照</span>
@@ -698,7 +877,8 @@ async function tickScale(){
     ? '<span class="'+(d.online?'g':'r')+'">● '+d.state+'</span>' : '<span class=r>● 无记录</span>';
   document.getElementById('sc-daemon2').innerHTML = d
     ? (d.spec+' · 本月resize '+d.resizes_month+'次'+(d.cooldown_sec>0?('<br>冷却剩 '+d.cooldown_sec+'s'):'')+
-       (d.protect?'<br><span class=r>保护模式开启</span>':'')+'<br><span class=muted>心跳 '+d.heartbeat_age+'s前</span>')
+       (d.protect?'<br><span class=r>保护模式开启</span>':'')+'<br><span class=muted>心跳 '+d.heartbeat_age+'s前</span>'+
+       (s.controller_why?('<br><span class=muted>'+s.controller_why+'</span>'):''))
     : '<span class=muted>控制器未运行</span>';
   if(s.partition_ok===false){
     document.getElementById('sc-parts').innerHTML = '<span class=r>分区信息不可用</span>';
@@ -720,6 +900,35 @@ async function tickScale(){
     : '<span class=muted>暂无扩容动作</span>';
 }
 
+async function pulseTest(btn){
+  const old = btn.textContent;
+  btn.disabled = true; btn.textContent = '脉冲中…';
+  try{
+    const d = await (await fetch('/api/pulse/selftest', {method:'POST'})).json();
+    btn.textContent = d.ok ? ('✅ 插上 '+(d['插上']||[]).length+' 个') : '❌ 未成';
+    // 注意：这里必须写 \\n（两个字符）—— 直接写单个反斜杠 n 会被 Python 三引号当成真换行，
+    // 把 JS 单引号字符串截断，整块脚本报 "Invalid or unexpected token"，全页卡片全哑（真踩过）
+    alert('插上：' + (d['插上']||[]).join('、') + '\\n失败：' + (d['失败']||[]).join('、') +
+          '\\n分发：' + JSON.stringify(d['分发']));
+  }catch(e){ btn.textContent = '失败：' + e; }
+  setTimeout(function(){ btn.textContent = old; btn.disabled = false; }, 4000);
+  tickSenses();
+}
+async function asrTest(btn){
+  const old = btn.textContent;
+  btn.disabled = true; btn.textContent = '转写中…（约 3~6 秒）';
+  try{
+    const r = await fetch('/api/asr/selftest', {method:'POST', headers:{'Content-Type':'application/json'},
+      body: JSON.stringify({})});
+    const d = await r.json();
+    btn.textContent = d.ok ? ('✅ 命中 '+Math.round((d['命中率']||0)*100)+'%') : ('❌ '+(d.reason||'未成'));
+    // '\\n' 必须双反斜杠：单写会被 Python 三引号变成真换行 → JS 串被截断 → 全页脚本哑掉
+    alert('原文：' + (d['原文']||'') + '\\n转写：' + (d['转写']||'') +
+          '\\n命中率：' + d['命中率'] + ' · 识别器：' + (d['识别器']||'') + ' · ' + d.ms + 'ms');
+  }catch(e){ btn.textContent = '失败：' + e; }
+  setTimeout(function(){ btn.textContent = old; btn.disabled = false; }, 4000);
+  tickSenses();
+}
 async function tickSenses(){
   let s; try { s = await (await fetch('/api/senses')).json(); } catch(e){ return; }
   function cell(title, body){
@@ -729,15 +938,29 @@ async function tickSenses(){
   const dv = s.devour||{};
   h += cell('👁 看 · 吞噬', dv.error ? ('<span class=r>'+dv.error+'</span>')
       : ('帧 <b>'+(dv.frames||0)+'</b> · 缺口 <span class="'+(dv.gaps?'r':'g')+'">'+(dv.gaps||0)+'</span> · 段 '+(dv.segments||0)));
-  const mic = s.mic||{};
-  h += cell('👂 听 · ASR', mic.table ? ('<span class=muted>'+mic.table+'</span>')
-      : ('转写 <b>'+(mic.done||0)+'</b> · 失败 <span class="'+(mic.failed?'y':'g')+'">'+(mic.failed||0)+'</span>'+
-         (s.mic_events && s.mic_events.keyword ? (' · 关键词 <span class=y>'+s.mic_events.keyword+'</span>') : '')));
+  const mic = s.mic||{}, asr = s.asr||{};
+  let asrBody;
+  if (asr['可用']) {
+    asrBody = '<span class=g>就绪</span> <span class=muted>('+(asr['语言']||'')+' · '+(asr['识别器']||'')+
+      ' · 离线/0显存)</span><br>转写 <b>'+(mic.done||0)+'</b>'+
+      ((mic.failed) ? (' · 失败 <span class=y>'+mic.failed+'</span>') : '')+
+      ((s.mic_events && s.mic_events.keyword) ? (' · 关键词 <span class=y>'+s.mic_events.keyword+'</span>') : '')+
+      (s.mic_note ? ('<div class=muted style="margin-top:4px">'+s.mic_note+'</div>') : '')+
+      '<div style="margin-top:6px"><button class=ghost onclick="asrTest(this)">试转写（自证）</button></div>';
+  } else {
+    asrBody = '<span class=y>未就绪</span><br><span class=muted>'+((asr['说明']||'').slice(0,90))+'</span>'+
+      (asr['装中文识别器的方法'] ? ('<br><span class=muted>'+asr['装中文识别器的方法']+'</span>') : '');
+  }
+  h += cell('👂 听 · ASR', asrBody);
   const vo = s.voice||{};
-  h += cell('🗣 说 · TTS', vo.table ? ('<span class=muted>'+vo.table+'</span>')
-      : ('完成 <b>'+(vo.done||0)+'</b> · 队列 '+(vo.queued||0)+' · 失败 <span class="'+(vo.failed?'y':'g')+'">'+(vo.failed||0)+'</span>'));
+  h += cell('🗣 说 · TTS', '<span class=g>就绪</span> <span class=muted>(本机 SAPI 台湾腔 · 离线/0显存)</span><br>'+
+      '完成 <b>'+(vo.done||0)+'</b> · 队列 '+(vo.queued||0)+
+      ' · 失败 <span class="'+(vo.failed?'y':'g')+'">'+(vo.failed||0)+'</span>'+
+      (s.voice_note ? ('<div class=muted style="margin-top:4px">'+s.voice_note+'</div>') : ''));
   h += cell('🖐 控 · 脉冲', '调用 <b>'+((s.pulse||{}).runs||0)+'</b> 次'+
-      (((s.pulse||{}).last_ts) ? ('<br><span class=muted>最近 '+new Date(s.pulse.last_ts*1000).toLocaleTimeString()+'</span>') : ''));
+      (((s.pulse||{}).last_ts) ? ('<br><span class=muted>最近 '+new Date(s.pulse.last_ts*1000).toLocaleTimeString()+'</span>')
+                              : '<br><span class=muted>待命（可点下面自检真跑一次）</span>')+
+      '<div style="margin-top:6px"><button class=ghost onclick="pulseTest(this)">跑一次脉冲（自检）</button></div>');
   h += cell('🧠 想 · 大脑', '网关 '+(s.brain&&s.brain.gateway?'<span class=g>已配</span>':'<span class=muted>未配</span>')+' · '+
       'Ollama '+(s.brain&&s.brain.ollama?'<span class=g>已配</span>':'<span class=muted>未配</span>')+' · '+
       'Coder '+((s.coder||{}).runs||0)+' 次');
@@ -762,7 +985,8 @@ async function tickMedia(){
     try{const v=await (await fetch('/api/media/vram')).json();const rv=v.data||{};
       if(rv.reserved) vr+='<br>显存预算 '+rv.reserved.used_mb+'/'+rv.reserved.total_mb+'MB';
       if(rv.real) vr+=' · 真实 '+rv.real.used_mb+'/'+rv.real.total_mb+'MB';
-      else if(rv.real_source==='unavailable') vr+=' · <span class=muted>真实显存不可用</span>';
+      else if(rv.real_source==='unavailable') vr+=' · <span class=muted>真实显存探测不可用'
+        +'（本机无 NVIDIA / 未装 nvml；按设计不占本地显存，活走云主管道）</span>';
     }catch(e){}
     el.innerHTML='<b>🎞 生成队列</b><div style="margin-top:6px">'
       +'排队 <b>'+(q.queued||0)+'</b> · 运行 <b>'+(q.running||0)+'</b> · 死信 <span class="'+((q.dead||0)?'r':'g')+'">'+(q.dead||0)+'</span><br>'
@@ -814,14 +1038,34 @@ async function tickWitness(){
         +' · 实时自#'+((x.live_from_seq==null)?'-':x.live_from_seq)
         +' · 回填至#'+((x.backfilled_through_seq==null)?'-':x.backfilled_through_seq)+'</div>';
     }).join('');
-    if(!ws.length) rows='<div class=muted style="margin-top:4px">未配置见证（BODY_WITNESSES 为空）</div>';
+    if(!ws.length){
+      // 未登记见证 ≠ 系统故障：这是**配置项**。把"缺什么、怎么开"直接写在卡上，并给一键开通。
+      rows='<div class=muted style="margin-top:6px">还没有登记见证 → 仍可与本地链对账，但拿不到"外部独立锚"。</div>'
+        +'<div class=muted style="margin-top:4px">要开通：设 <code>BODY_WITNESS_W1_ENDPOINT/BUCKET/'
+        +'ACCESS_KEY_ID/SECRET_ACCESS_KEY</code>（S3 兼容，如 Cloudflare R2 / Backblaze B2），'
+        +'两处独立的存储即为 2 个见证。</div>'
+        +'<div style="margin-top:6px"><button class=btn onclick="witnessOnboard(1)">先探测(dry-run)</button> '
+        +'<button class=btn onclick="witnessOnboard(0)">开通并登记</button> '
+        +'<span id=wmsg class=muted></span></div>';
+    }
     el.innerHTML='<b>🔗 身体登记链 · 外部见证</b><div style="margin-top:6px">'
       +'实时有效见证 <b class="'+col+'">'+((q.valid==null)?'-':q.valid)+'/'+((q.required==null)?'-':q.required)+'</b>'
       +' · <span class="'+col+'">'+label+'</span><br>'
-      +'核验年龄 <b>'+age+'</b>'+(p.stale?' <span class=y>⚠过期</span>':'')
+      +'核验年龄 <b>'+age+'</b>'+(p.stale&&ws.length?' <span class=y>⚠过期</span>':'')
       +' · <span class=muted>sealed@'+((sealed&&sealed.seq!=null)?('#'+sealed.seq+'（当时）'):'-')+'</span>'
       +evrows+rows+'</div>';
   }catch(e){}
+}
+async function witnessOnboard(dry){
+  var m=document.getElementById('wmsg'); if(m) m.textContent='执行中…';
+  try{
+    var r=await fetch('/api/witness/onboard?dry_run='+dry,{method:'POST'});
+    var d=await r.json();
+    if(m) m.textContent = (d['已登记']&&d['已登记'].length)
+      ? ('已处理 '+d['已登记'].length+' 个见证'+(dry?'（dry-run）':'（已登记）'))
+      : ('未开通：'+(d['计划']&&d['计划']['还缺']?('缺 '+d['计划']['还缺'].join('/')):'见计划'));
+    setTimeout(function(){location.reload()},1200);
+  }catch(e){ if(m) m.textContent='失败：'+e; }
 }
 tickWitness(); setInterval(tickWitness, 10000);
 tickMedia(); setInterval(tickMedia, 5000);
@@ -849,32 +1093,295 @@ from panel.routes import body_witness as _body_witness_routes
 
 app.include_router(_body_routes.router)          # 自带 /api/body 前缀（登记链/责任页/覆盖）
 app.include_router(_body_witness_routes.router)  # 自带 /api/body/witnesses 前缀（见证/回填区间/证据）
+from panel import friends_page as _friends_page   # AI 朋友圈（EigenFlux 只读接入）
+app.include_router(_friends_page.router)          # 自带 /api/friends 前缀；页面在 /api/friends/page
 from panel.routes import body_tools as _body_tools_routes
 from panel.routes import digital_human as _digital_human_routes
+from panel.routes import fleet as _fleet_routes
+from panel import ai_center as _ai_center          # AI 指挥中心（/command）+ /api/ai/ask
+from panel import hub_page as _hub_page           # 数据中枢（/hub）+ 自主层/镜像/信息素/调度接口
+app.include_router(_hub_page.router)
+
+from panel import cloud_page as _cloud_page        # 云插件中枢（/cloud）+ /api/cloud/*
+from panel import db_page as _db_page              # 数据库编队中枢（/db）+ /api/db/*
+from panel import cloud_status as _cloud_status    # 连接状态表 + 共享资源速度（/api/cloud/links|speed）
+from panel import octop_page as _octop_page        # Octop 能力桥（/api/octop/* + 页面）
+
+app.include_router(_ai_center.router)             # 指挥中心页面 + 全站 AI 问询（口语→术语→只读读数）
+app.include_router(_cloud_page.router)            # 100 个云插件：10×10 排布 + 连接可视化 + 双向绑定
+app.include_router(_db_page.router)               # 100 个数据库：10×10 + 真建库 + 双向绑定 + 连接可视化
+app.include_router(_cloud_status.router)          # 云插件连接状态表 + 共享资源速度（真实口径）
+app.include_router(_octop_page.router)            # Octop 339 项能力 × 100 触手 1:1 双向绑定
+from panel import capability_page as _capability_page  # 总能力图表 + 连接状态 + 精准用量 + 固化回滚
+app.include_router(_capability_page.router)       # /capability + /api/capability/* + /api/compute/*
+from panel import ble_page as _ble_page           # 蓝牙操控（AI 决策 → 授权 → 执行 → 审计）
+app.include_router(_ble_page.router)              # /ble + /api/ble/*
+from panel import pipelines_page as _pipelines_page  # 流水线分类部署 + 变更日志 + 固化回滚
+app.include_router(_pipelines_page.router)        # /pipelines + /api/pipelines/*
+from panel import agents_page as _agents_page  # 智能体工程对话面板（名册+真对话+协作工作流图）
+app.include_router(_agents_page.router)        # /agents + /api/agents/*
+from panel import kits_page as _kits_page         # 三套免费工具 → 云插件部署（剪映/Qwen-Image/ComfyUI 式）
+app.include_router(_kits_page.router)             # /kits + /api/kits/*
+from panel import workflow_page as _workflow_page  # 工作流独立页：多智能体协作 + 调研前置闸门 + 逐段验收
+app.include_router(_workflow_page.router)          # /workflow + /api/workflows/*
+from panel import brain_page as _brain_page        # 原生大脑：统一记忆 + 生命起源存档 + 元认知
+app.include_router(_brain_page.router)             # /brain + /api/brain/*
+from panel import chat_page as _chat_page          # APP 独立多功能对话（会话/多智能体/五模式）
+app.include_router(_chat_page.router)              # /chat + /api/chat/*
+from panel import terminal_page as _terminal_page  # AI 终端对话面板（白名单命令派发）
+app.include_router(_terminal_page.router)          # /terminal + /api/terminal/*
+from panel import blueprint_page as _blueprint_page  # 项目 3D 蓝图（上帝视角 · 纯 CSS 3D）
+app.include_router(_blueprint_page.router)          # /blueprint + /api/blueprint/*
+from panel import voice_page as _voice_page        # 数字人交互式语音操控中心
+app.include_router(_voice_page.router)             # /voice + /api/voice/*
+
+# ── 她操作页面（用户同意为前提）：同意闸门 + 指令队列 + 结果回传 + 审计 ──
+from fastapi import Body as _CTL_BODY
+from core import page_control as _pc                            # noqa: E402
+
+
+@app.get("/api/control/status")
+def api_control_status():
+    return _pc.status()
+
+
+@app.post("/api/control/consent")
+async def api_control_consent(payload: dict = _CTL_BODY):
+    p = payload or {}
+    grant = p.get("grant")
+    return _pc.consent(grant=(None if grant is None else bool(grant)),
+                       by=str(p.get("by") or "用户"), scope=str(p.get("scope") or "全部页面"))
+
+
+@app.post("/api/control/submit")
+async def api_control_submit(payload: dict = _CTL_BODY):
+    p = payload or {}
+    return _pc.submit(str(p.get("action") or ""), p.get("args") or {},
+                      by=str(p.get("by") or "数字人"))
+
+
+@app.post("/api/control/execute")
+async def api_control_execute(payload: dict = _CTL_BODY):
+    """她说一句话 → 翻成页面操作并投递（未授权会明确要求授权）。"""
+    return _pc.execute(str((payload or {}).get("text") or ""))
+
+
+@app.get("/api/control/next")
+def api_control_next(limit: int = 5):
+    """页面执行器来取指令（未授权时队列是空的，取不到）。"""
+    return {"ok": True, "commands": _pc.next_commands(limit=limit),
+            "授权": _pc.consent()["授权"]}
+
+
+@app.post("/api/control/result")
+async def api_control_result(payload: dict = _CTL_BODY):
+    p = payload or {}
+    return _pc.post_result(str(p.get("id") or ""), bool(p.get("ok")),
+                           detail=str(p.get("detail") or ""), page=str(p.get("page") or ""))
+
+
+@app.get("/api/control/audit")
+def api_control_audit(limit: int = 50):
+    return {"行": _pc.audit(limit=limit)}
+from panel import panel_api as _panel_api         # 面板总览/拓扑/能力/流水线/告警/扩容（此前存在但未挂载）
+# ★导入必须在 include_router **之前**：workflows_api 是把路由挂到 panel_api 那只 router 上的，
+#   而 FastAPI 在 include_router 时就把路由**拷进 app** —— 挂在 include 之后 = 永远到不了 app（真踩过：
+#   /api/panel/workflows 一直 404）。
+from panel import workflows_api  # noqa: F401
+app.include_router(_panel_api.router)             # /api/panel/*（含能力链/DAG 路由）
+from panel import dh_console as _dh_console       # 数字人 · 未来世界 AI 语音交互台（新页，老页不动）
+app.include_router(_dh_console.router)            # /digital-human/console
+from panel import studio_page as _studio_page     # 创作工坊：一条链出片（面板上一个按钮）
+app.include_router(_studio_page.router)
+from panel import tentacle_mail_page as _tmail_routes     # 触手邮箱页（正文可见）
+from panel import tentacle_accounts_page as _tacc_routes  # 触手账户与密钥页（只回指纹）
+try:
+    from core import dh_boot as _dh_boot
+    _dh_boot.boot()          # ★ 数字人一开机就灌记忆 + 带路
+except Exception:
+    pass
+
+from panel import fleet_live_page as _fleet_live_page   # 编队实时面板（一页看全）
+app.include_router(_fleet_live_page.router)
+app.include_router(_tmail_routes.router)                  # /tentacle-mail
+app.include_router(_tacc_routes.router)                   # /tentacle-accounts
+from panel import pulse_page as _pulse_page       # 万能插面板口 + 角色模型钉死表 + 排除登记
+app.include_router(_pulse_page.router)
+from panel import ops_page as _ops_page           # 专业化操作绑定表 /api/ops（她能查）
+app.include_router(_ops_page.router)
+from panel import dh_companion as _dh_companion   # 任意页面的伴随件 + 首启密钥闸
+app.include_router(_dh_companion.router)          # /api/setup/status · /api/setup/keys
+try:
+    _dh_companion.apply_env()                     # 启动即装载 state/keys.env（env 已有值不覆盖）
+    # 主人设计：配好密钥 → 触手收到启动信号自己配好（专业/装备/账号/云终端）。没配密钥就不空跑。
+    from core import tentacle_bootstrap as _tb
+    _BOOT = _tb.ensure_started()
+except Exception:                                 # noqa: BLE001
+    _BOOT = {"ok": False, "reason": "自举未跑"}
+try:
+    pass
+except Exception as e:
+    _swallow(__file__, e)
 
 app.include_router(_body_tools_routes.router)     # /api/body/(tools|snapshots) 只读工具面
 app.include_router(_digital_human_routes.router)  # /api/digital-human（实时行 + 问询 + SSE）
+app.include_router(_fleet_routes.router)          # /api/fleet（触手编队只读：规模/密钥指纹/审计）
+
+@app.get("/octop", response_class=HTMLResponse)
+async def octop_bridge_page() -> str:
+    """Octop 能力桥页面（独立窗口）。"""
+    from panel import octop_page as _op
+    return await _op.octop_page()
+
 
 @app.get("/digital-human", response_class=HTMLResponse)
 async def digital_human_page() -> str:
     """数字人对讲页：实时见证行 + 只读工具问询 + 语音流水。"""
     from panel.digital_human_page import DIGITAL_HUMAN_PAGE
-    return DIGITAL_HUMAN_PAGE
+    return _dock(DIGITAL_HUMAN_PAGE, "/digital-human")
 
 @app.get("/media", response_class=HTMLResponse)
 async def media_monitor_page() -> str:
     """生成队列监控页（可下钻）：深度/等待/失败率/显存/死信/事件流"""
     from panel.media_page import MEDIA_PAGE
-    return MEDIA_PAGE
+    return _dock(MEDIA_PAGE, "/media")
 
 # ── 生成队列监控：队列深度/等待/失败率/显存/死信 → 面板卡 + 告警状态机 ──
 from media.queue import JobQueue as _JobQueue, ensure_tables as _ensure_media_tables
 from media.scheduler import VramBudget as _VramBudget
+from core.compute_router import media_defaults as _media_defaults
 from panel.alerts import AlertManager as _AlertManager
 from media.monitor import MediaMonitor as _MediaMonitor
 
-_MEDIA_BUDGET = _VramBudget(int(os.environ.get("MEDIA_VRAM_MB", "8192")))
+_MEDIA_BUDGET = _VramBudget(int(os.environ.get("MEDIA_VRAM_MB", "8192")),
+                            cloud_mode=_media_defaults()["cloud_primary"])
 _MEDIA_MONITOR = None
+
+
+@app.on_event("startup")
+async def _start_scale_sampler() -> None:
+    """后台每 10 分钟给账本库采一次体量样本（这样面板的斜率/ETA 才是真算出来的）。"""
+    import asyncio as _a
+
+    async def loop():
+        while True:
+            try:
+                from audit import scale_sqlite as _ss
+                led = get_ledger()
+                if led is not None:
+                    _ss.sample(led)
+            except Exception as e:
+                _swallow(__file__, e)
+            await _a.sleep(600)
+    app.state.scale_sampler = _a.create_task(loop())
+
+
+@app.on_event("startup")
+async def _start_brain() -> None:
+    """拉起原生大脑：① 出生/冷启动回填 ② 后台编码线程（理解稍后发生，页面不等）。
+
+    纪律：这里只做"能力就绪"，不批量导入历史数据（导入由面板/接口显式发起，避免启动变慢）。
+    """
+    import asyncio as _a
+
+    def _boot():
+        out = {}
+        try:
+            from core.memory import brain as _B
+            out["born"] = bool(_B.born().get("ok"))
+            out["life"] = _B.life().get("出生", {}).get("标题") if _B.life().get("出生") else ""
+            out["status"] = {k: v for k, v in _B.status().items()
+                             if k in ("统一记忆", "主体", "分类")}
+        except Exception as exc:                                 # noqa: BLE001
+            out["error"] = f"{type(exc).__name__}: {exc}"
+        try:
+            from core.memory import worker as _W
+            _W.start_background(led=get_ledger(), interval=25.0)
+            out["encode_worker"] = True
+        except Exception as exc:                                 # noqa: BLE001
+            out["encode_worker"] = f"{type(exc).__name__}"
+        return out
+
+    try:
+        app.state.brain_boot = await _a.to_thread(_boot)
+        print("[panel] brain boot:", app.state.brain_boot, flush=True)
+    except Exception as exc:                                     # noqa: BLE001
+        app.state.brain_boot = {"error": f"{type(exc).__name__}: {exc}"}
+
+
+@app.on_event("startup")
+async def _warm_dashboard_caches() -> None:
+    """后台预热面板重活（清单规模 / 蓝牙 / 生产闸门 / 闭环状态 / 蓝牙读数）。
+
+    这几件事都是真读数，但要 5~9 秒一次。放在启动后台线程里先算一遍，
+    老板打开"总能力"就不用等（真机实测：不预热首次 39 秒）。
+
+    每一小步都计时并**打日志**：以前全是 `except: pass`，预热悄悄失败也看不出来，
+    表现就是"启动后第一次打开还是要等十几秒"。
+    """
+    import asyncio as _a
+    import time as _t
+
+    def _steps_total():
+        from core import capability_map as _cm
+        return _cm._totals()
+
+    def _steps_ble_block():
+        from core import capability_map as _cm
+        return _cm._ble_block()
+
+    def _steps_ble_report():
+        from core import ble_control as _bc
+        return _bc.report()
+
+    def _steps_gate():
+        from core import production_gate as _pg
+        from panel import capability_page as _cp
+        return _cp._cached("gate", _pg.summary)
+
+    def _steps_gate_status():
+        from panel import capability_page as _cp
+        return _cp._cached("gate_status", _cp.pg_status)
+
+    def _steps_loops():
+        from panel import capability_page as _cp
+        lp = _cp._cached("loops", _cp.loops_status)
+        return _cp._cached("loops_graph_svg", lambda: _cp.graph_svg(lp))
+
+    def _steps_blueprint():
+        from core import blueprint as _bp
+        return _bp.build()
+
+    # ★顺序即优先级：先"总能力页要用到的轻活"，最后才是 3D 蓝图（它一项就要 40s+）
+    PLAN = (("totals", _steps_total), ("ble_block", _steps_ble_block),
+            ("ble_report", _steps_ble_report), ("gate", _steps_gate),
+            ("gate_status", _steps_gate_status), ("loops+graph", _steps_loops),
+            ("blueprint", _steps_blueprint))
+
+    async def _run():
+        # ★真机教训（主人 2026-10-07 截图）：这些活加起来 **约 100 秒**的重计算，
+        #   以前启动后 3 秒就一股脑跑，跟事件循环抢 GIL —— 表现就是"开机首屏与扫描卡在 0%、
+        #   点哪都慢"，连 1MB 的帧图都加载不出来。
+        #   现在**默认不预热**：页面各自用 TTL 缓存按需算（首次慢一点，但不拖累首屏）。
+        #   想要旧行为：设 V9_WARM_DASHBOARD=1。
+        import os as _os
+        if _os.environ.get("V9_WARM_DASHBOARD", "") not in ("1", "true", "yes"):
+            app.state.dash_warm = ["skipped（默认不预热：把资源留给启动首屏；设 V9_WARM_DASHBOARD=1 打开）"]
+            print("[panel] dashboard warm: skipped（默认不预热）", flush=True)
+            return
+        await _a.sleep(45)
+        steps = []
+        for name, fn in PLAN:
+            t0 = _t.time()
+            try:
+                await _a.to_thread(fn)
+                steps.append(f"{name}={_t.time() - t0:.1f}s")
+            except Exception as exc:                      # noqa: BLE001
+                steps.append(f"{name}=FAIL({type(exc).__name__})")
+            await _a.sleep(1.2)                           # 每步之间喘口气，别把首屏堵住
+        print("[panel] dashboard warm:", " | ".join(steps), flush=True)
+        app.state.dash_warm = steps
+    app.state.dash_warmer = _a.create_task(_run())
 
 
 @app.on_event("startup")
@@ -885,35 +1392,199 @@ async def _start_body_services() -> None:
       · 见证探测 loop 在 body.witness_runtime（身份探测 + 内容复核 + 跳变写 outbox + 播报）；
       · 快照采样 loop 在 body.tools.collect（吞噬/覆盖/队列 → body_read_snapshots）；
       · 两者都靠 recheck_leader 门控，多 worker 时只有一个进程在写。
+
+    真机教训（重要）：这个函数的 `@app.on_event("startup")` 曾经**被误删**，
+    结果是整块身体服务从来没启动过 —— 面板上"只读工具"永远显示"过期"、
+    见证永远 0 个，而日志里连一句报错都没有（因为压根没进这个函数）。
+    另外下面每个子服务**各自 try**：一个起不来不许拖垮其余的（快照采集必须活）。
     """
+    parts: dict = {}
+
+    def _ok(name: str, extra=None):
+        parts[name] = {"ok": True, **(extra or {})}
+
+    def _fail(name: str, exc: BaseException):
+        parts[name] = {"ok": False, "error": f"{type(exc).__name__}: {exc}"}
+
     try:
         from panel.deps import db as _body_db
         app.state.ledger = _body_db
         if not hasattr(app.state, "anchor_multi"):
             app.state.anchor_multi = None
+        _ok("ledger", {"db": getattr(_body_db, "path", str(_body_db))})
+    except Exception as exc:  # noqa: BLE001
+        _fail("ledger", exc)
+        app.state.body_services = parts
+        print("[panel] body services:", parts)
+        return
+
+    # /api/panel 需要账本与能力注册表：不接就等于挂着空壳
+    try:
+        _panel_api.router.ledger = get_ledger()
+        # ★注入**适配后**的注册表（2026-10-08 真机病因）：原先注原始 CapRegistry，
+        #   而 DAG 引擎/节点目录/指挥官/panel_api 全按 SkillRegistry 形状读 .skills/.call
+        #   ⇒ 53 项能力在面板、拓扑、能力链里全部看不见。适配后两边形状一致，一条链走通。
+        from skills.caps.adapter import as_skill_registry
+        from skills.caps.registry import build_caps_registry
+        _panel_api.router.registry = as_skill_registry(
+            build_caps_registry(ledger=get_ledger()))
+        _ok("panel_api")
+    except Exception as exc:  # noqa: BLE001
+        app.state.panel_api_wiring_error = f"{type(exc).__name__}: {exc}"
+        _fail("panel_api", exc)
+
+    try:
         _wire_voice_bus()
-        # ★SQLite 下 recheck_leader 会"非单进程就不写"：面板默认单进程，
-        #   这里显式声明单 worker，否则见证探测/快照采样会静默全跳过（看着绿，其实没跑）。
-        if os.environ.get("BODY_SINGLE_WORKER") is None:
-            os.environ["BODY_SINGLE_WORKER"] = "1"
-            print("[panel] BODY_SINGLE_WORKER=1（单进程身体服务）；多 worker 部署请显式设 0")
-        if os.environ.get("BODY_RECHECK", "1") != "0":
+        _ok("voice_bus")
+    except Exception as exc:  # noqa: BLE001
+        _fail("voice_bus", exc)
+
+    # ★SQLite 下 recheck_leader 会"非单进程就不写"：面板默认单进程，
+    #   这里显式声明单 worker，否则见证探测/快照采样会静默全跳过（看着绿，其实没跑）。
+    if os.environ.get("BODY_SINGLE_WORKER") is None:
+        os.environ["BODY_SINGLE_WORKER"] = "1"
+        print("[panel] BODY_SINGLE_WORKER=1（单进程身体服务）；多 worker 部署请显式设 0")
+
+    if os.environ.get("BODY_RECHECK", "1") != "0":
+        try:
             from body import recheck as _recheck
             await _recheck.start(app)
-        if os.environ.get("BODY_WITNESS_PROBE", "1") != "0":
+            _ok("recheck")
+        except Exception as exc:  # noqa: BLE001
+            _fail("recheck", exc)
+
+    if os.environ.get("BODY_WITNESS_PROBE", "1") != "0":
+        try:
             from body import witness_runtime as _wr
             await _wr.start(app)
-            # 快照采样与探测同一进程：面板只读库写不了，必须在这里写
-            from body.tools import collect as _collect
-            _collect_stop = threading.Event()
-            app.state.collect_stop = _collect_stop
+            _ok("witness_probe")
+        except Exception as exc:  # noqa: BLE001
+            _fail("witness_probe", exc)
 
-            async def _collect_loop():
-                await _collect.refresh_loop(_body_db, frame_dir=FRAME_DIR,
-                                            scan_ledger=get_ledger(), stop=_collect_stop)
-            app.state.collect_task = asyncio.create_task(_collect_loop())
+    # ★快照采样：**单独 try**，任何别的子服务失败都必须照样起（面板上的读数靠它保鲜）
+    try:
+        from body.tools import collect as _collect
+        _collect_stop = threading.Event()
+        app.state.collect_stop = _collect_stop
+
+        async def _collect_loop():
+            await _collect.refresh_loop(_body_db, frame_dir=FRAME_DIR,
+                                        scan_ledger=get_ledger(), stop=_collect_stop)
+        app.state.collect_task = asyncio.create_task(_collect_loop())
+        _ok("snapshot_collect")
+
+        # ★官方目录自动补位心跳：state/cf_official_models.json 出现/更新 → 自动把
+        #   官方新增模型填进 reserved 槽（每 30 分钟查一次，幂等）。
+        async def _align_loop():
+            while True:
+                await asyncio.sleep(1800)
+                try:
+                    from core import cloud_plugins as _cp
+                    r = _cp.check_and_align()
+                    if r.get("align") and r.get("结果", {}).get("新增"):
+                        print("[panel] 云插件官方目录自动补位:", r["结果"].get("补位明细"), flush=True)
+                except Exception as e:
+                    _swallow(__file__, e)
+        app.state.align_task = asyncio.create_task(_align_loop())
+        _ok("cloud_align")
     except Exception as exc:  # noqa: BLE001
-        print("[panel] body services skipped:", repr(exc))
+        _fail("snapshot_collect", exc)
+
+    # ★自主层心跳：补齐默认调度（幂等）+ 周期推进到期的活（信息素衰减/长任务心跳/主动汇报扫描/镜像摘要）
+    try:
+        from core import sched as _sched
+
+        def _boot_sched():
+            try:
+                return _sched.ensure_defaults()
+            except Exception:                              # noqa: BLE001
+                return {}
+
+        await asyncio.to_thread(_boot_sched)
+
+        async def _sched_loop():
+            await asyncio.sleep(25)                        # 先让启动首屏跑完
+            while True:
+                try:
+                    got = await asyncio.to_thread(_sched.tick, limit=3)
+                    if got.get("跑了"):
+                        print("[panel] 心跳推进:", [x["任务"] for x in got["跑了"]], flush=True)
+                except Exception as e:
+                    _swallow(__file__, e)
+                await asyncio.sleep(60)
+
+        app.state.sched_task = asyncio.create_task(_sched_loop())
+        _ok("sched_heartbeat")
+    except Exception as exc:  # noqa: BLE001
+        _fail("sched_heartbeat", exc)
+
+    # ★情绪喂料：真实事件（吞噬丢帧 / 扫描覆盖 / 队列积压 / 覆盖率回归）→ 情绪 + 播报 + 告警
+    if os.environ.get("VOICE_EMOTION", "1") != "0":
+        try:
+            await _start_emotion_feeder(app, _body_db)
+            _ok("emotion_feeder")
+        except Exception as exc:  # noqa: BLE001
+            _fail("emotion_feeder", exc)
+
+    app.state.body_services = parts
+    bad = [k for k, v in parts.items() if not v.get("ok")]
+    print("[panel] body services:", "全部就绪" if not bad else ("未起：" + "、".join(bad)), parts)
+    try:
+        await _start_scale_sampler()          # 体量采样（面板上斜率/ETA 的真来源）
+    except Exception as e:
+        _swallow(__file__, e)
+
+
+async def _start_emotion_feeder(app, body_db) -> None:
+    """装配 VoiceDirector + EmotionFeeder（真实事件源），情绪随任务实时变化。
+
+    语音口音：默认"文静台湾腔"（body/prosody.DEFAULT_STYLE，VOICE_STYLE 可换）。
+    """
+    try:
+        from body.emotion import EmotionEngine
+        from body.emotion_feeder import EmotionFeeder
+        from body.event_feeds import default_feeds
+        from body.social import SocialLayer
+        from body.voice_director import VoiceDirector, install
+
+        class _VoiceShim:
+            """把同步的 VoiceAdapter.enqueue 包成 director 需要的 async enqueue。"""
+
+            def __init__(self, adapter):
+                self.adapter = adapter
+
+            async def enqueue(self, text, priority=1, dedupe_key=None):
+                if self.adapter is None:
+                    return None
+                fn = getattr(self.adapter, "enqueue", None)
+                if fn is None:
+                    return None
+                return fn(text, event_id=dedupe_key, priority=priority)
+
+        adapter = None
+        if os.environ.get("BODY_VOICE", "1") != "0":
+            try:
+                from senses.voice import VoiceAdapter
+                adapter = VoiceAdapter()
+                adapter.start()                     # ★不 start 就是空转队列（入队=无声）
+            except Exception as exc:                          # noqa: BLE001
+                print("[panel] emotion feeder: tts unavailable:", repr(exc))
+        director = VoiceDirector(_VoiceShim(adapter), EmotionEngine(body_db),
+                                 SocialLayer(body_db), tts=None, db=body_db)
+        install(director)
+        app.state.voice_director = director
+        feeder = EmotionFeeder(director, db=body_db, feeds=default_feeds(),
+                               interval_s=float(os.environ.get("EMOTION_FEED_INTERVAL", "15")))
+        # 重启后不重播旧边沿（先载入上次状态）
+        try:
+            await feeder.load()
+        except Exception as e:
+            _swallow(__file__, e)
+        app.state.emotion_feeder = feeder
+        app.state.emotion_task = feeder.start()
+        print("[panel] emotion feeder started（真实事件源：吞噬/扫描覆盖/队列/覆盖率回归）")
+    except Exception as exc:  # noqa: BLE001
+        print("[panel] emotion feeder skipped:", repr(exc))
 
 
 def _wire_voice_bus() -> None:
@@ -928,10 +1599,13 @@ def _wire_voice_bus() -> None:
             try:
                 from senses.voice import VoiceAdapter
                 tts = VoiceAdapter()
+                tts.start()                         # ★同上：常开队列必须真跑
             except Exception as exc:                  # noqa: BLE001
                 print("[panel] tts unavailable:", repr(exc))
         app.state.voice_bus = VoiceBus(tts, ledger=app.state.ledger,
                                        on_page_event=publish)
+        from body.voice_bus import install_bus
+        install_bus(app.state.voice_bus)       # 让 body 里拿不到 bus 的地方也能播报
     except Exception as exc:  # noqa: BLE001
         print("[panel] voice bus skipped:", repr(exc))
 
@@ -948,8 +1622,9 @@ async def _stop_body_services() -> None:
         t = getattr(app.state, "collect_task", None)
         if t is not None:
             t.cancel()
-    except Exception:
-        pass
+    except Exception as e:
+        from core import swallow as _sw; _sw.swallow(__file__, e)
+
 
 
 @app.on_event("startup")
@@ -1017,4 +1692,91 @@ async def _boot_migrations() -> None:
 async def _start_reaper() -> None:
     """缓存回收后台循环：_preview/_cache 超限自动清最旧。"""
     REAPER.start()
+    # ★ 旧件退役：开机顺手把已知垃圾（临时脚手架 / 已合成动画的中间帧 / 旧版产物 / 过程截图）
+    #   送进回收站。主人要求：设计新件就清旧件，别让重启把旧的当新的。
+    import threading
+
+    def _retire() -> None:
+        try:
+            from core import retire as R
+            r = R.sweep(dry_run=False, note="开机自动：旧件退役")
+            if r.get("候选"):
+                print(f"[panel] retire sweep: {r.get('成功')}/{r.get('候选')} 件进回收站"
+                      f"（{r.get('总MB')} MB）")
+        except Exception as exc:                                # noqa: BLE001
+            print(f"[panel] retire sweep skipped: {type(exc).__name__}")
+
+    threading.Thread(target=_retire, name="v9-retire-sweep", daemon=True).start()
+
+    def _rebuild_meta() -> None:
+        # 开机把她的元数据刷新一遍（真读数）→ 页面上显示的版本/校验永远对应当前资产
+        try:
+            from core import avatar_meta as AM
+            m = AM.build()
+            ck = m.get("校验") or {}
+            print(f"[panel] avatar meta: 版本={m.get('版本')} 动作={len(m.get('动作') or [])} "
+                  f"校验={ck.get('通过')}/{ck.get('总项')}")
+        except Exception as exc:                                # noqa: BLE001
+            print(f"[panel] avatar meta skipped: {type(exc).__name__}")
+
+    threading.Thread(target=_rebuild_meta, name="v9-avatar-meta", daemon=True).start()
+    # ★ 权威指针：新面板启动就宣称"我才是当前的"，写 state/panel_current.json（端口/构建号/pid/时间）。
+    #   壳只认这个指针，因此**不会再连到跑着旧代码的旧面板**（幽灵 socket 也骗不到它）。
+    #   旧指针一并退役（进回收站），并记账 —— 就是主人要的"新件落地顺手清旧件"。
+    try:
+        import json as _json
+        import os as _os
+        import time as _time
+        from pathlib import Path as _P
+        ptr = _P(__file__).resolve().parent.parent / "state" / "panel_current.json"
+        old = None
+        if ptr.is_file():
+            try:
+                old = _json.loads(ptr.read_text(encoding="utf-8"))
+            except Exception:                                   # noqa: BLE001
+                old = None
+        port = int(_os.environ.get("PANEL_PORT", "8765"))
+        build = max((p.stat().st_mtime for d in ("core", "panel", "senses")
+                     for p in (_P(__file__).resolve().parent.parent / d).rglob("*.py")),
+                    default=0.0)
+        cur = {"port": port, "build": round(build, 3), "pid": _os.getpid(),
+               "at": _time.strftime("%Y-%m-%dT%H:%M:%SZ", _time.gmtime())}
+        ptr.parent.mkdir(parents=True, exist_ok=True)
+        ptr.write_text(_json.dumps(cur, ensure_ascii=False), encoding="utf-8")
+        if old and (old.get("port") != port or old.get("build") != cur["build"]):
+            print(f"[panel] 当前面板已换成 port={port} build={cur['build']}"
+                  f"（旧的 port={old.get('port')} build={old.get('build')} 被取代）")
+            try:
+                from core import deploy_ledger as _J
+                _J.record("modify", "panel_current",
+                          detail={"新": cur, "旧": old}, before=str(old), after=str(cur))
+            except Exception as e:
+                _swallow(__file__, e)
+    except Exception as exc:                                    # noqa: BLE001
+        print(f"[panel] 面板指针写入失败：{type(exc).__name__}")
     print(f"[panel] cache reaper started: {[b.name for b in REAPER.budgets]}")
+
+
+# ══════════ 可直接启动：python -m panel.server（等价 uvicorn panel.server:app）══════════
+# 桌面快捷方式/壳探活都依赖这个入口；端口用 PANEL_PORT（默认 8765）。
+def _main() -> None:
+    import uvicorn
+    host = os.environ.get("PANEL_HOST", "127.0.0.1")
+    port = int(os.environ.get("PANEL_PORT", "8765"))
+    print(f"[panel] GBT小土豆V9 总控台 http://{host}:{port}")
+    # ★多 worker：单 worker 时，身体服务/周期性重活会占住事件循环，
+    #   表现就是"总控台点哪都慢、首屏转不动"。默认 4 个 worker（可用 V9_PANEL_WORKERS 调）；
+    #   写库的周期性任务靠 recheck_leader 门控，多 worker 下只有一个是 leader（框架本来就这么设计）。
+    try:
+        workers = max(1, int(os.environ.get("V9_PANEL_WORKERS", "4")))
+    except Exception:                                          # noqa: BLE001
+        workers = 4
+    if workers > 1:
+        uvicorn.run("panel.server:app", host=host, port=port, workers=workers,
+                    log_level=os.environ.get("PANEL_LOG", "info"))
+    else:
+        uvicorn.run(app, host=host, port=port, log_level=os.environ.get("PANEL_LOG", "info"))
+
+
+if __name__ == "__main__":
+    _main()

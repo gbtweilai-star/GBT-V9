@@ -8,6 +8,7 @@ import json
 import os
 import time
 from pathlib import Path
+from core.swallow import swallow as _swallow
 
 DEVOUR_SAMPLE_S = 5
 SCAN_SAMPLE_S = 30
@@ -179,8 +180,9 @@ async def refresh_loop(ledger, *, frame_dir=None, scan_ledger=None, budget=None,
                     await ledger.record_blocked("read_snapshot_refresh_failed",
                                                 {"fails": fails,
                                                  "error": type(e).__name__})
-                except Exception:
-                    pass
+                except Exception as e:
+                    _swallow(__file__, e)
+
         await asyncio.sleep(interval)
 
 

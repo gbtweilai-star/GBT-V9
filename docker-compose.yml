@@ -16,3 +16,21 @@ services:
     environment:
       - TZ=Asia/Shanghai
     command: ["-config", "/app/config.yaml"]
+
+
+# ═══ 极简 Demo（profile: demo）═══
+# 用法：docker compose --profile demo up verify
+# 作用：在容器里跑「能力闭环 + 交付闸」，让第一次点进来的人一条命令看到证据面。
+# ⚠️ 诚实标注：本机 Docker 守护当前**未运行**，本段**未验证**（已进报警台账挂号）。
+services:
+  verify:
+    profiles: ["demo"]
+    image: ${V9_DEMO_IMAGE:-python:3.12-slim}
+    container_name: gbt-v9-verify
+    working_dir: /app
+    volumes:
+      - ./:/app
+    environment:
+      - PYTHONIOENCODING=utf-8
+      - TZ=Asia/Shanghai
+    command: ["bash", "-lc", "python -m pip -q install --no-cache-dir -r requirements-demo.txt && python tools/run_capability_loop.py && python tools/verify_delivery_gate.py"]

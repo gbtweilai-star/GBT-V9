@@ -1,0 +1,402 @@
+# GBT小土豆V9 · 材质与光照精修模板（对云上重建的整身模型做本地 PBR 精修）
+# dev: 自由的风 · 本署名不可删除、不可篡改归属
+#
+# 为什么（2026-10-07）：云上图生3D 给的是"照片测量式"贴图 —— 形对了，但材质是平的：
+#   皮肤没有次表面散射（像塑料）、西装没有布料粗糙度、眼睛/唇没有高光。
+#   这一层在**本地**免费把材质的物理感补回来，并配上更讲究的影棚光：
+#     · 按"贴图颜色 + 部位高度"自动把材质分类为 皮肤 / 头发 / 布料 / 白件 / 深色件
+#     · 皮肤：次表面散射 + 轻微凹凸；布料：粗糙度 + 绒面(Sheen)；白件：皮革感高光；深色件：低反射
+#     · 灯光：主光/补光/轮廓光 + 渐变背板 + 地面接影（人站得住）+ 少量环境光
+#   贴图（albedo）**原样保留**，只重写物理参数 —— 所以不会把脸画走形。
+#
+# 关键点：
+#   · 读贴图用 image.pixels.foreach_get（C 级拷贝，几秒；逐像素 Python 循环会卡死）
+#   · 材质分类靠"平均色 + 该材质面的平均高度"，不用猜文件名（云侧材质名是随机 uuid）
+#   · 正面朝向用 __FRONT_OFFSET__ 校准（自动判据偶尔偏 90°）
+
+import bpy, math, os
+import numpy as np
+from mathutils import Vector
+
+GLB = r"__GLB__"
+OUT_DIR = r"__OUT_DIR__"
+LABEL = "__LABEL__"
+W, H = __W__, __H__
+ANGLES = __ANGLES__
+FRONT_OFFSET = __FRONT_OFFSET__
+POLISH = __POLISH__
+STYLIZE = __STYLIZE__
+
+bpy.ops.wm.read_factory_settings(use_empty=True)
+scene = bpy.context.scene
+try:
+    scene.render.engine = "BLENDER_EEVEE_NEXT"
+except Exception:
+    scene.render.engine = "BLENDER_EEVEE"
+try:
+    scene.eevee.taa_render_samples = 128          # 精修版：采样拉高，阴影更柔
+    scene.eevee.use_raytracing = True
+    scene.eevee.use_shadows = True
+except Exception:
+    pass
+scene.render.resolution_x, scene.render.resolution_y = W, H
+try:                                              # 轻微辉光：发丝/眼睛的高光更像原图
+    scene.use_nodes = True
+    ct = scene.node_tree
+    for n in list(ct.nodes):
+        ct.nodes.remove(n)
+    rl_ = ct.nodes.new("CompositorNodeRLayers")
+    gl = ct.nodes.new("CompositorNodeGlare")
+    gl.glare_type = "BLOOM"; gl.mix = -0.90; gl.threshold = 2.0; gl.size = 6   # 太强会把白耳朵吹爆（踩过）
+    co = ct.nodes.new("CompositorNodeComposite")
+    ct.links.new(rl_.outputs["Image"], gl.inputs["Image"])
+    ct.links.new(gl.outputs["Image"], co.inputs["Image"])
+except Exception as _e:
+    print("辉光设置跳过:", _e)
+try:
+    scene.view_settings.view_transform = "AgX"
+    scene.view_settings.look = "AgX - Medium Contrast"
+    scene.view_settings.exposure = 0.32
+except Exception:
+    pass
+
+# ── 渐变影棚背板 ──
+world = bpy.data.worlds.new("W"); world.use_nodes = True
+nt = world.node_tree
+for n in list(nt.nodes):
+    if n.type != "OUTPUT_WORLD":
+        nt.nodes.remove(n)
+out = [n for n in nt.nodes if n.type == "OUTPUT_WORLD"][0]
+tc = nt.nodes.new("ShaderNodeTexCoord")
+mp = nt.nodes.new("ShaderNodeMapping")
+gr = nt.nodes.new("ShaderNodeTexGradient"); gr.gradient_type = "LINEAR"
+rl = nt.nodes.new("ShaderNodeValToRGB")
+rl.color_ramp.elements[0].color = (0.045, 0.05, 0.065, 1)
+rl.color_ramp.elements[1].color = (0.33, 0.35, 0.40, 1)
+bg = nt.nodes.new("ShaderNodeBackground"); bg.inputs["Strength"].default_value = 0.5
+nt.links.new(tc.outputs["Generated"], mp.inputs["Vector"])
+nt.links.new(mp.outputs["Vector"], gr.inputs["Vector"])
+nt.links.new(gr.outputs["Color"], rl.inputs["Fac"])
+nt.links.new(rl.outputs["Color"], bg.inputs["Color"])
+nt.links.new(bg.outputs["Background"], out.inputs["Surface"])
+scene.world = world
+
+bpy.ops.import_scene.gltf(filepath=GLB)
+meshes = [o for o in scene.objects if o.type == "MESH"]
+if not meshes:
+    raise SystemExit("导入后没有网格：%s" % GLB)
+
+
+def robust(vals, lo=0.004, hi=0.996):
+    vals = sorted(vals)
+    n = len(vals)
+    return vals[max(0, int(n*lo))], vals[min(n-1, int(n*hi))]
+
+
+def eval_pts(objs):
+    dg = bpy.context.evaluated_depsgraph_get()
+    out = []
+    for ob in objs:
+        ev = ob.evaluated_get(dg)
+        me = ev.to_mesh()
+        mw = ob.matrix_world
+        out.extend([mw @ v.co for v in me.vertices])
+        ev.to_mesh_clear()
+    return out
+
+
+pts = eval_pts(meshes)
+xl, xh = robust([p.x for p in pts]); yl, yh = robust([p.y for p in pts])
+zl, zh = robust([p.z for p in pts])
+high = zh - zl
+cx, cy, cz = (xl+xh)/2.0, (yl+yh)/2.0, (zl+zh)/2.0
+print("模型: 高 %.3f 宽 %.3f" % (high, xh-xl))
+
+# 正面：脚尖朝前（有脚时）；半身像降级用头发质量
+foot = [p for p in pts if p.z < zl + high*0.06]
+if len(foot) >= 20:
+    yb = sum(p.y for p in foot)/len(foot)
+    front_sign = 1.0 if yb >= cy else -1.0
+else:
+    up = [p for p in pts if p.z > zh - high*0.45]
+    yb = sum(p.y for p in up)/max(1, len(up))
+    front_sign = 1.0 if yb >= cy else -1.0
+FRONT = Vector((0.0, front_sign, 0.0))
+Rt = Vector((FRONT.y, -FRONT.x, 0.0))
+print("正面 y=%s" % FRONT.y)
+
+
+# ── 材质分类（按**每个面的贴图颜色 + 部位高度**）：云侧整张贴图合成一个 atlas，
+#    所以必须逐面取样，才能把 皮肤/头发/布料/白件/深色件 拆成不同材质（否则 SSS 落不到皮肤上）
+mats = set()
+for ob in meshes:
+    for m in ob.data.materials:
+        if m:
+            mats.add(m)
+base_mat = next(iter(mats)) if mats else None
+img = None
+if base_mat and base_mat.use_nodes:
+    for n in base_mat.node_tree.nodes:
+        if n.type == "TEX_IMAGE" and n.image:
+            img = n.image
+            break
+print("atlas:", None if img is None else (img.size[0], img.size[1], img.name))
+atlas = None
+if img is not None:
+    try:
+        buf = np.empty(len(img.pixels), dtype=np.float32)
+        img.pixels.foreach_get(buf)
+        atlas = buf.reshape(img.size[1], img.size[0], 4)
+    except Exception as e:
+        print("读 atlas 失败:", e)
+
+
+def sample(u, v):
+    if atlas is None:
+        return (0.4, 0.4, 0.4)
+    x = int(min(max(u, 0.0), 0.999) * atlas.shape[1])
+    y = int(min(max(v, 0.0), 0.999) * atlas.shape[0])
+    return atlas[y, x, :3]
+
+
+def kind_of(col, zrel):
+    r, g, b = float(col[0]), float(col[1]), float(col[2])
+    bright = (r + g + b) / 3.0
+    warm = r - b
+    if warm > 0.030 and bright > 0.10:
+        return "skin"
+    if bright > 0.45 and zrel > 0.70:
+        return "hair"
+    if bright > 0.45:
+        return "white"
+    if bright > 0.045:
+        return "cloth"
+    return "dark"
+
+
+PRESET = {
+    "skin":  dict(rough=0.42, metal=0.0, spec=0.45, sss=0.22, sheen=0.0, noise=260.0, bump=0.10),
+    "hair":  dict(rough=0.30, metal=0.0, spec=0.62, sss=0.0,  sheen=0.10, noise=520.0, bump=0.06),
+    "white": dict(rough=0.34, metal=0.0, spec=0.55, sss=0.0,  sheen=0.18, noise=380.0, bump=0.10),
+    "cloth": dict(rough=0.74, metal=0.0, spec=0.30, sss=0.0,  sheen=0.26, noise=300.0, bump=0.16),
+    "dark":  dict(rough=0.52, metal=0.05, spec=0.40, sss=0.0, sheen=0.10, noise=300.0, bump=0.08),
+    "eye":   dict(rough=0.05, metal=0.0, spec=0.95, sss=0.0, sheen=0.0, noise=0.0, bump=0.0,
+                  emit=(0.55, 0.62, 0.75), emit_str=0.55),
+    "unknown": dict(rough=0.55, metal=0.0, spec=0.45, sss=0.0, sheen=0.0, noise=0.0, bump=0.0),
+}
+# 调色（逼近原图那套冷调/高对比）：给贴图乘一层色调
+TINT = {"skin": (1.03, 0.995, 0.99), "cloth": (0.90, 0.92, 0.96),
+        "white": (1.0, 1.0, 1.0), "hair": (1.06, 1.06, 1.08), "dark": (0.95, 0.95, 1.0),
+        "eye": (1.0, 1.0, 1.0), "unknown": (1.0, 1.0, 1.0)}
+
+
+def build_mat(kind, src):
+    m = src.copy() if src else bpy.data.materials.new(kind)
+    m.name = "v9_" + kind
+    p = PRESET[kind]
+    bsdf = None
+    for n in m.node_tree.nodes:
+        if n.type == "BSDF_PRINCIPLED":
+            bsdf = n
+            break
+    if bsdf is None:
+        return m
+    bsdf.inputs["Roughness"].default_value = p["rough"]
+    if "Metallic" in bsdf.inputs:
+        bsdf.inputs["Metallic"].default_value = p["metal"]
+    if "Specular IOR Level" in bsdf.inputs:
+        bsdf.inputs["Specular IOR Level"].default_value = p["spec"]
+    if p["sss"] and "Subsurface Weight" in bsdf.inputs:
+        bsdf.inputs["Subsurface Weight"].default_value = p["sss"]
+        for k, v in (("Subsurface Scale", 0.02), ("Subsurface Radius", (0.36, 0.14, 0.09))):
+            if k in bsdf.inputs:
+                try:
+                    bsdf.inputs[k].default_value = v
+                except Exception:
+                    pass
+    if p.get("emit"):
+        if "Emission Color" in bsdf.inputs:
+            bsdf.inputs["Emission Color"].default_value = (*p["emit"], 1.0)
+            bsdf.inputs["Emission Strength"].default_value = p.get("emit_str", 0.3)
+    if p["sheen"] and "Sheen Weight" in bsdf.inputs:
+        bsdf.inputs["Sheen Weight"].default_value = p["sheen"]
+        if "Sheen Roughness" in bsdf.inputs:
+            bsdf.inputs["Sheen Roughness"].default_value = 0.35
+    tint = TINT.get(kind)
+    if tint:
+        src_link = None
+        for lk in m.node_tree.links:
+            if lk.to_socket == bsdf.inputs["Base Color"]:
+                src_link = lk
+        if src_link is not None:
+            mix = m.node_tree.nodes.new("ShaderNodeMix")
+            mix.data_type = "RGBA"; mix.blend_type = "MULTIPLY"
+            mix.inputs["Factor"].default_value = 1.0
+            mix.inputs[7].default_value = (tint[0], tint[1], tint[2], 1.0)
+            frm = src_link.from_socket
+            m.node_tree.links.remove(src_link)
+            m.node_tree.links.new(frm, mix.inputs[6])
+            m.node_tree.links.new(mix.outputs[2], bsdf.inputs["Base Color"])
+    if p["noise"] and p["bump"]:
+        t = m.node_tree.nodes.new("ShaderNodeTexNoise")
+        t.inputs["Scale"].default_value = p["noise"]
+        b = m.node_tree.nodes.new("ShaderNodeBump")
+        b.inputs["Strength"].default_value = p["bump"]
+        m.node_tree.links.new(t.outputs["Fac"], b.inputs["Height"])
+        m.node_tree.links.new(b.outputs["Normal"], bsdf.inputs["Normal"])
+    return m
+
+
+counts = {}
+if POLISH and base_mat is not None:
+    made = {}
+    for ob in meshes:
+        ob.data.materials.clear()
+        slot_of = {}
+        for kind in PRESET:
+            mm = build_mat(kind, base_mat)
+            ob.data.materials.append(mm)
+            slot_of[kind] = len(ob.data.materials) - 1
+            made.setdefault(kind, mm)
+        uvl = ob.data.uv_layers.active.data if ob.data.uv_layers.active else None
+        for poly in ob.data.polygons:
+            if uvl is None:
+                kind = "cloth"
+            else:
+                us = 0.0; vs = 0.0
+                for li in poly.loop_indices:
+                    uv = uvl[li].uv
+                    us += uv.x; vs += uv.y
+                k = max(1, len(poly.loop_indices))
+                col = sample(us/k, vs/k)
+                zc = (ob.matrix_world @ poly.center).z
+                zrel = (zc - zl) / max(1e-6, high)
+                kind = kind_of(col, zrel)
+                # 头部区域里"很暗且偏饱和"的面 = 眼睛/睫毛 → 单独一类，做镜面高光
+                if zrel > 0.76 and float(col[0]) + float(col[1]) + float(col[2]) < 0.35:
+                    kind = "eye"
+            poly.material_index = slot_of[kind]
+            counts[kind] = counts.get(kind, 0) + 1
+    print("面分类统计:", counts)
+    if img is not None and made:
+        for mm in made.values():
+            for n in mm.node_tree.nodes:
+                if n.type == "TEX_IMAGE" and n.image is None:
+                    n.image = img
+    report = [{"类型": k, **{kk: vv for kk, vv in PRESET[k].items() if kk in ("rough", "sss", "sheen")},
+               "面数": counts.get(k, 0)} for k in counts]
+    print("材质精修:", report)
+
+# ── 影棚三点光 + 地面 ──
+sc = max(xh-xl, high) / 2.6
+
+
+def light(pos, energy, size, color):
+    ld = bpy.data.lights.new("L", type="AREA")
+    ld.energy = energy; ld.size = size; ld.color = color
+    lo = bpy.data.objects.new("L", ld); lo.location = pos
+    lo.rotation_euler = (Vector((cx, cy, cz)) - Vector(pos)).to_track_quat("-Z", "Y").to_euler()
+    scene.collection.objects.link(lo)
+
+
+light((cx + FRONT.x*2.4*sc + Rt.x*1.7*sc, cy + FRONT.y*2.4*sc + Rt.y*1.7*sc, cz + 1.65*sc),
+      460*sc*sc, 2.4*sc, (1.0, 0.975, 0.94))            # 主光（略暖）
+light((cx + FRONT.x*1.7*sc - Rt.x*2.4*sc, cy + FRONT.y*1.7*sc - Rt.y*2.4*sc, cz + 0.45*sc),
+      120*sc*sc, 3.4*sc, (0.93, 0.95, 1.0))             # 补光（略冷）
+light((cx - FRONT.x*2.6*sc + Rt.x*0.5*sc, cy - FRONT.y*2.6*sc + Rt.y*0.5*sc, cz + 2.2*sc),
+      420*sc*sc, 2.0*sc, (1.0, 0.99, 1.0))               # 轮廓光（把发丝勾出来）
+bpy.ops.mesh.primitive_plane_add(size=30*sc, location=(cx, cy, zl - 0.02*sc))
+floor = bpy.context.active_object
+fm = bpy.data.materials.new("floor"); fm.use_nodes = True
+fm.node_tree.nodes["Principled BSDF"].inputs["Base Color"].default_value = (0.20, 0.21, 0.25, 1)
+fm.node_tree.nodes["Principled BSDF"].inputs["Roughness"].default_value = 0.65
+floor.data.materials.append(fm)
+
+# ── 相机 ──
+cam_data = bpy.data.cameras.new("cam")
+cam_data.lens = 68.0
+cam_data.sensor_fit = "VERTICAL"
+cam_data.sensor_height = 24.0
+cam_data.dof.use_dof = True
+cam_data.dof.aperture_fstop = 2.4
+focus = bpy.data.objects.new("focus", None)
+focus.location = (cx, cy, cz)
+scene.collection.objects.link(focus)
+cam_data.dof.focus_object = focus
+cam = bpy.data.objects.new("cam", cam_data)
+scene.collection.objects.link(cam); scene.camera = cam
+DIST = high * 1.10 * cam_data.lens / cam_data.sensor_height
+EL = math.radians(4.0)
+
+
+def place(turn_deg, dist, el=EL, target=None):
+    th = math.radians(turn_deg + FRONT_OFFSET)
+    dx = FRONT.x*math.cos(th) + Rt.x*math.sin(th)
+    dy = FRONT.y*math.cos(th) + Rt.y*math.sin(th)
+    tx, ty, tz = target or (cx, cy, cz)
+    cam.location = (tx + dx*dist*math.cos(el), ty + dy*dist*math.cos(el), tz + math.sin(el)*dist)
+    cam.rotation_euler = (Vector((tx, ty, tz)) - Vector(cam.location)).to_track_quat("-Z", "Y").to_euler()
+
+
+# ── 风格化：Freestyle 描边（Blender 原生轮廓线，比"反壳"可靠）+ Punchy 对比 + 暗角 ──
+if STYLIZE:
+    try:
+        scene.view_settings.look = "AgX - Punchy"
+        scene.view_settings.exposure = 0.42
+    except Exception:
+        pass
+    try:
+        scene.render.use_freestyle = True
+        vl = scene.view_layers[0]
+        vl.use_freestyle = True
+        fs = vl.freestyle_settings
+        fs.as_render_pass = False
+        while len(fs.linesets) > 1:
+            fs.linesets.remove(fs.linesets[-1])
+        ls = fs.linesets[0] if len(fs.linesets) else fs.linesets.new("outline")
+        ls.name = "outline"
+        ls.select_silhouette = True
+        ls.select_border = True
+        ls.select_crease = False
+        ls.select_edge_mark = False
+        ls.linestyle.color = (0.02, 0.02, 0.035)
+        ls.linestyle.thickness = 2.4
+        print("Freestyle 描边已开")
+    except Exception as e:
+        print("Freestyle 跳过:", e)
+    try:                                    # 暗角：椭圆遮罩 → 模糊 → 相乘
+        ct = scene.node_tree
+        if ct is not None:
+            comp = [n for n in ct.nodes if n.type == "COMPOSITE"]
+            glare = [n for n in ct.nodes if n.type == "GLARE"]
+            if comp and glare:
+                mask = ct.nodes.new("CompositorNodeEllipseMask")
+                mask.width = 1.2; mask.height = 1.2; mask.x = 0.5; mask.y = 0.5
+                blur = ct.nodes.new("CompositorNodeBlur")
+                blur.size_x = blur.size_y = 140
+                inv = ct.nodes.new("CompositorNodeInvert")
+                mul = ct.nodes.new("CompositorNodeMixRGB")
+                mul.blend_type = "MULTIPLY"; mul.inputs["Fac"].default_value = 0.8
+                ct.links.new(mask.outputs["Mask"], blur.inputs["Image"])
+                ct.links.new(blur.outputs["Image"], inv.inputs["Color"])
+                ct.links.new(glare.outputs["Image"], mul.inputs[1])
+                ct.links.new(inv.outputs["Color"], mul.inputs[2])
+                ct.links.new(mul.outputs["Image"], comp[0].inputs["Image"])
+                print("暗角已加")
+    except Exception as e:
+        print("暗角跳过:", e)
+
+os.makedirs(OUT_DIR, exist_ok=True)
+place(20.0, DIST)
+scene.render.filepath = OUT_DIR + "/" + LABEL + "_hero.png"
+bpy.ops.render.render(write_still=True)
+for i in range(ANGLES):
+    place(360.0 * i / ANGLES, DIST)
+    scene.render.filepath = OUT_DIR + "/" + LABEL + "_turn%02d.png" % i
+    bpy.ops.render.render(write_still=True)
+# 脸部特写：从头顶往下 22% 高度处，正面略偏
+face_z = zh - high * 0.10
+place(14.0, DIST*0.32, el=math.radians(1.5), target=(cx, cy, face_z))
+scene.render.filepath = OUT_DIR + "/" + LABEL + "_face.png"
+bpy.ops.render.render(write_still=True)
+print("V9_POLISH_OK", OUT_DIR, LABEL)

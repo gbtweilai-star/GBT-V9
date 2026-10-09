@@ -1,0 +1,124 @@
+# templates/blender_glb_view.tmpl —— 把外部 GLB 导进 Blender 出多角度验收图（零下载/零联网）
+# 约定：占位符 __GLB__ / __OUT_DIR__ / __W__ / __H__ / __VIEWS__ 由 core/blender.view_glb 填。
+import json
+import math
+import os
+
+import bpy
+from mathutils import Vector
+
+GLB = r"__GLB__"
+OUT_DIR = r"__OUT_DIR__"
+W, H = __W__, __H__
+VIEWS = json.loads(r"""__VIEWS__""")
+os.makedirs(OUT_DIR, exist_ok=True)
+
+bpy.ops.wm.read_factory_settings(use_empty=True)
+sc = bpy.context.scene
+
+bpy.ops.import_scene.gltf(filepath=GLB)
+
+objs = [o for o in bpy.data.objects if o.type == "MESH"]
+assert objs, "no mesh imported"
+
+mn = Vector((1e9, 1e9, 1e9))
+mx = Vector((-1e9, -1e9, -1e9))
+for o in objs:
+    for c in o.bound_box:
+        w = o.matrix_world @ Vector(c)
+        for i in range(3):
+            mn[i] = min(mn[i], w[i])
+            mx[i] = max(mx[i], w[i])
+center = (mn + mx) / 2.0
+size = mx - mn
+height = max(size.z, 1e-6)
+print("BBOX", tuple(round(v, 3) for v in mn), tuple(round(v, 3) for v in mx))
+
+# ---------- 世界：中性灰渐变（跟参考图的灰底一致） ----------
+world = bpy.data.worlds.new("v9w")
+sc.world = world
+world.use_nodes = True
+nt = world.node_tree
+for n in list(nt.nodes):
+    nt.nodes.remove(n)
+out = nt.nodes.new("ShaderNodeOutputWorld")
+bg = nt.nodes.new("ShaderNodeBackground")
+bg.inputs[1].default_value = 0.55
+ramp = nt.nodes.new("ShaderNodeValToRGB")
+ramp.color_ramp.elements[0].position = 0.30
+ramp.color_ramp.elements[0].color = (0.16, 0.17, 0.21, 1)
+ramp.color_ramp.elements[1].position = 0.72
+ramp.color_ramp.elements[1].color = (0.52, 0.53, 0.58, 1)
+sep = nt.nodes.new("ShaderNodeSeparateXYZ")
+tex = nt.nodes.new("ShaderNodeTexCoord")
+nt.links.new(tex.outputs["Generated"], sep.inputs[0])
+nt.links.new(sep.outputs["Z"], ramp.inputs[0])
+nt.links.new(ramp.outputs["Color"], bg.inputs[0])
+nt.links.new(bg.outputs[0], out.inputs[0])
+
+# ---------- 灯光：主光 / 补光 / 轮廓光（按身高缩放） ----------
+def area(name, loc, energy, sz, rot):
+    d = bpy.data.lights.new(name, type="AREA")
+    d.energy = energy
+    d.size = sz
+    o = bpy.data.objects.new(name, d)
+    o.location = loc
+    o.rotation_euler = rot
+    sc.collection.objects.link(o)
+    return o
+
+k = height
+area("key", (center.x - 0.9 * k, center.y - 1.3 * k, center.z + 0.7 * k), 240 * k * k, 1.2 * k,
+     (math.radians(58), 0, math.radians(-35)))
+area("fill", (center.x + 1.1 * k, center.y - 0.9 * k, center.z + 0.35 * k), 80 * k * k, 1.6 * k,
+     (math.radians(74), 0, math.radians(52)))
+area("rim", (center.x + 0.2 * k, center.y + 1.4 * k, center.z + 0.9 * k), 150 * k * k, 1.0 * k,
+     (math.radians(120), 0, math.radians(190)))
+
+# ---------- 地面 ----------
+bpy.ops.mesh.primitive_plane_add(size=6 * k, location=(center.x, center.y, mn.z - 0.001))
+floor = bpy.context.object
+fm = bpy.data.materials.new("floor")
+fm.use_nodes = True
+fm.node_tree.nodes["Principled BSDF"].inputs["Base Color"].default_value = (0.13, 0.14, 0.17, 1)
+fm.node_tree.nodes["Principled BSDF"].inputs["Roughness"].default_value = 0.72
+floor.data.materials.append(fm)
+
+# ---------- 相机 ----------
+cd = bpy.data.cameras.new("cam")
+cd.lens = 62.0
+cam = bpy.data.objects.new("cam", cd)
+sc.collection.objects.link(cam)
+sc.camera = cam
+target = Vector((center.x, center.y, center.z))
+
+# ---------- 渲染设置 ----------
+sc.render.engine = "BLENDER_EEVEE_NEXT"
+sc.render.resolution_x = W
+sc.render.resolution_y = H
+sc.render.film_transparent = False
+sc.view_settings.view_transform = "AgX"
+sc.view_settings.look = "AgX - Medium High Contrast"
+try:
+    sc.eevee.taa_render_samples = 96
+    sc.eevee.use_raytracing = True
+except Exception as e:                                            # noqa: BLE001
+    print("eevee opt:", e)
+
+shots = []
+for name, az, el in VIEWS:
+    dist = height * 2.35
+    a, e = math.radians(az), math.radians(el)
+    cam.location = Vector((target.x + dist * math.sin(a) * math.cos(e),
+                           target.y - dist * math.cos(a) * math.cos(e),
+                           target.z + dist * math.sin(e)))
+    d = target - cam.location
+    cam.rotation_euler = d.to_track_quat("-Z", "Y").to_euler()
+    path = os.path.join(OUT_DIR, name + ".png")
+    sc.render.filepath = path
+    bpy.ops.render.render(write_still=True)
+    shots.append(path)
+    print("SHOT", name, path)
+
+print("MESHES", json.dumps([o.name for o in objs]))
+print("DONE", json.dumps(shots))

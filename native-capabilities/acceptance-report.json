@@ -1,12 +1,12 @@
 {
- "generated_at": "2026-10-06 02:32:56",
+ "generated_at": "2026-10-07 02:17:50",
  "manifest": "C:\\Users\\ADMIN\\gbt-potato-v9\\native-capabilities\\octop.offline.manifest.json",
  "capabilities": 53,
  "probe_pass": "53/53",
  "operations_pass": "12/12",
  "acceptance_pass": "45/45",
  "all_pass": true,
- "workdir": "C:\\Users\\ADMIN\\AppData\\Local\\Temp\\v9-accept-ta3ay0p5",
+ "workdir": "C:\\Users\\ADMIN\\AppData\\Local\\Temp\\v9-accept-yvvew468",
  "ledger_rows": {
   "workflow_runs": 1,
   "agent_runs": 3,
@@ -437,7 +437,7 @@
    "capability": "devour.zero_drop",
    "kind": "artifact",
    "pass": true,
-   "detail": "C:\\Users\\ADMIN\\AppData\\Local\\Temp\\v9-accept-ta3ay0p5\\native-artifacts\\devour_synthetic_capture-index.json (564B)"
+   "detail": "C:\\Users\\ADMIN\\AppData\\Local\\Temp\\v9-accept-yvvew468\\native-artifacts\\devour_synthetic_capture-index.json (564B)"
   },
   {
    "capability": "devour.zero_drop",
@@ -449,25 +449,25 @@
    "capability": "devour.print_restore",
    "kind": "artifact",
    "pass": true,
-   "detail": "C:\\Users\\ADMIN\\AppData\\Local\\Temp\\v9-accept-ta3ay0p5\\native-artifacts\\devour_print_restore_probe-restored.bin (1024B)"
+   "detail": "C:\\Users\\ADMIN\\AppData\\Local\\Temp\\v9-accept-yvvew468\\native-artifacts\\devour_print_restore_probe-restored.bin (1024B)"
   },
   {
    "capability": "devour.segment_pack",
    "kind": "artifact",
    "pass": true,
-   "detail": "C:\\Users\\ADMIN\\AppData\\Local\\Temp\\v9-accept-ta3ay0p5\\native-artifacts\\devour_synthetic_capture-index.json (564B)"
+   "detail": "C:\\Users\\ADMIN\\AppData\\Local\\Temp\\v9-accept-yvvew468\\native-artifacts\\devour_synthetic_capture-index.json (564B)"
   },
   {
    "capability": "devour.r2_watermark",
    "kind": "artifact",
    "pass": true,
-   "detail": "C:\\Users\\ADMIN\\AppData\\Local\\Temp\\v9-accept-ta3ay0p5\\native-artifacts\\devour_synthetic_capture-index.json (564B)"
+   "detail": "C:\\Users\\ADMIN\\AppData\\Local\\Temp\\v9-accept-yvvew468\\native-artifacts\\devour_synthetic_capture-index.json (564B)"
   },
   {
    "capability": "devour.playback",
    "kind": "artifact",
    "pass": true,
-   "detail": "C:\\Users\\ADMIN\\AppData\\Local\\Temp\\v9-accept-ta3ay0p5\\native-artifacts\\devour_synthetic_capture-index.json (564B)"
+   "detail": "C:\\Users\\ADMIN\\AppData\\Local\\Temp\\v9-accept-yvvew468\\native-artifacts\\devour_synthetic_capture-index.json (564B)"
   },
   {
    "capability": "devour.gap_alert",

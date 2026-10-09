@@ -4,6 +4,7 @@
 # 纪律: 复核结果写 chain_audit_runs, 绝不写回 registration(链头必须不动);
 #       低优先级只读快照 + 分批让出事件循环; 断点可续; 失败作废 checkpoint
 from __future__ import annotations
+from core.swallow import swallow as _swallow
 import asyncio, json, logging, os, random, signal, uuid
 from contextlib import asynccontextmanager
 
@@ -139,8 +140,8 @@ async def _invalidate_checkpoint(ledger):
     """作废增量可信点（存库版本）：下次强制全量重验。"""
     try:
         await drop_checkpoint(ledger)
-    except Exception:                      # 库不可达时不阻断复核流程
-        pass
+    except Exception as e:
+        _swallow(__file__, e)
 
 
 async def _escalate(ledger, res, fail_mode):
@@ -163,8 +164,8 @@ async def _announce(msg: str) -> None:
         _v = VoiceAdapter()
         _v.enqueue(msg, event_id="recheck:" + str(int(asyncio.get_event_loop().time())),
                    priority=0)
-    except Exception:
-        pass
+    except Exception as e:
+        _swallow(__file__, e)
 
 
 async def _escalate_anchor(ledger, res, fail_mode):

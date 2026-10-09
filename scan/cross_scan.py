@@ -11,6 +11,7 @@
 import json, time, uuid, random
 from dataclasses import dataclass, asdict
 from enum import Enum
+from core.swallow import swallow as _swallow
 
 class CrossState(str, Enum):
     PENDING = "pending"; CLAIMED = "claimed"; DONE = "done"
@@ -174,8 +175,9 @@ class CrossBoard:
                 "INSERT OR IGNORE INTO cross_arbitration VALUES(?,?,?,?,?,?,?,?)",
                 (self.run_id, target, json.dumps(original, ensure_ascii=False),
                  json.dumps(reviewed, ensure_ascii=False), "", "", time.time(), 0))
-        except Exception:
-            pass
+        except Exception as e:
+            _swallow(__file__, e)
+
         verdict = {"verdict": "disagree", "cmd": "review", "hint": "原扫描与复核不一致"}
         if self.brain:
             verdict = self.brain.ask(

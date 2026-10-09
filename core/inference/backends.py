@@ -6,6 +6,7 @@ import os, json, time, threading, urllib.request, urllib.error
 from dataclasses import dataclass, field
 from typing import Protocol, runtime_checkable
 from senses.sqldialect import txn
+from core.swallow import swallow as _swallow
 
 
 @dataclass
@@ -75,8 +76,9 @@ class VLLMBackend:
                 if line.startswith(k):
                     try:
                         out[k] = float(line.rsplit(" ", 1)[1])
-                    except Exception:
-                        pass
+                    except Exception as e:
+                        _swallow(__file__, e)
+
         return out
 
     def chat(self, messages, *, model=None, stream=False, **params):
@@ -260,8 +262,9 @@ class InferenceRouter:
                     backend TEXT, status TEXT, detail TEXT)""")
                 cur.execute(f"INSERT INTO inference_events VALUES({','.join([ph]*4)})",
                             (time.time(), backend, status, err[:500]))
-        except Exception:
-            pass
+        except Exception as e:
+            _swallow(__file__, e)
+
 
 
 def default_router(ledger=None, brain=None):

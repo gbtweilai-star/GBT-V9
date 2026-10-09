@@ -6,6 +6,7 @@
 import threading
 import time
 from typing import Any, Callable
+from core.swallow import swallow as _swallow
 
 Handler = Callable[[dict], Any]
 
@@ -50,8 +51,9 @@ class Mesh:
                 self.ledger.log("mesh", f"{msg.get('from','?')}->{target}",
                                 "scanned" if ok else "vuln",
                                 f"{msg.get('kind','msg')} {int((time.time()-started)*1000)}ms")
-            except Exception:
-                pass
+            except Exception as e:
+                _swallow(__file__, e)
+
         return {"ok": ok, "result": result}
 
     def broadcast(self, msg: dict, *, exclude: str = "") -> dict:

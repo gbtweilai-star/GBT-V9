@@ -102,33 +102,54 @@ class VoiceBus:
 
     # ─────────── 页面推送 / 事件状态 / 背压（此前只有调用、没有实现）───────────
     async def _speak_one(self, text, critical: bool):
-        """TTS 适配层：speak_priority > speak > enqueue。
+        """TTS 适配层：speak_priority > speak > enqueue；**全失败则退到本机 SAPI**。
 
-        senses.voice.VoiceAdapter 是**队列式**的（enqueue + 自己线程播），
-        没有 speak 方法 —— 直接调 speak 会 AttributeError，声音就永远出不来。
+        VoiceAdapter 是队列式的（enqueue + 自己线程播），没有 speak 方法；
+        而 VoiceStudio(3900) 没起时主通道必然失败 —— 真机表现就是"说·TTS 完成 0 / 失败 N"。
+        这里补一条本机免费通道（Windows SAPI，默认台湾腔韵律），并如实标出用的哪条通道。
         """
         t = getattr(self, "tts", None)
-        if t is None:
-            raise RuntimeError("no_tts")
         prio = "critical" if critical else "normal"
-        for attr in ("speak_priority", "speak"):
-            fn = getattr(t, attr, None)
-            if fn is None:
-                continue
-            try:
-                r = (fn(text, priority=prio, interrupt=critical) if attr == "speak_priority"
-                     else fn(text, priority=prio))
-            except TypeError:                                # 适配器签名更简
-                r = fn(text)
-            if asyncio.iscoroutine(r):
-                await r
-            return
-        fn = getattr(t, "enqueue", None)
-        if fn is None:
-            raise RuntimeError("tts_has_no_speak_or_enqueue")
-        r = fn(text, priority=0 if critical else 1)
-        if isinstance(r, dict) and r.get("queued") is False:   # 背压/去重 → 如实算失败
-            raise RuntimeError("tts_refused:" + str(r.get("reason")))
+        if t is not None:
+            for attr in ("speak_priority", "speak"):
+                fn = getattr(t, attr, None)
+                if fn is None:
+                    continue
+                try:
+                    r = (fn(text, priority=prio, interrupt=critical)
+                         if attr == "speak_priority" else fn(text, priority=prio))
+                except TypeError:                            # 适配器签名更简
+                    r = fn(text)
+                except Exception:                            # noqa: BLE001
+                    continue                                 # 主通道抛错 → 试下一个/退本机
+                if asyncio.iscoroutine(r):
+                    try:
+                        r = await r
+                    except Exception:                        # noqa: BLE001
+                        continue
+                if not (isinstance(r, dict) and r.get("ok") is False):
+                    self.last_channel = "voicestudio"
+                    return
+            fn = getattr(t, "enqueue", None)
+            # ★2026-10-08：队列**没 start 就是空转** —— 入队成功不等于说过话，
+            #   不许拿它冒充成功（否则本机 SAPI 兜底永远轮不到，页面记"说·TTS 完成"而人没听见）。
+            if fn is not None and getattr(t, "started", False):
+                try:
+                    r = fn(text, priority=0 if critical else 1)
+                except Exception:                            # noqa: BLE001
+                    r = {"queued": False, "reason": "enqueue_failed"}
+                if not (isinstance(r, dict) and r.get("queued") is False):
+                    self.last_channel = "voicestudio-queue"
+                    return
+        try:                                                 # 本机免费通道（台湾腔韵律）
+            from senses import voice_sapi as vs
+            got = vs.speak(text, taiwan=True)
+            if got.get("ok"):
+                self.last_channel = "sapi"
+                return
+            raise RuntimeError(f"local_tts_failed:{got.get('reason')}")
+        except Exception as exc:                              # noqa: BLE001
+            raise RuntimeError(f"no_tts_channel:{type(exc).__name__}") from exc
 
     async def _notify_page(self, sid, payload):
         """把播报状态推给数字人页面。没有订阅者也要静默成功（页面可能没开）。"""
@@ -159,4 +180,54 @@ class VoiceBus:
         await self._notify_page(sid, {"type": "backpressure", "text": u["text"],
                                       "utterance_id": u["utterance_id"],
                                       "priority": u["priority"]})
+
+
+# ─────────── 模块级播报口（此前被 body/witness_runtime.py:303 空引用）───────────
+# 真机病因（2026-10-08）：witness_runtime 拿不到 bus 实例，只能
+#   `from body.voice_bus import announce` —— 而本模块**从来没有 announce**，
+#   ImportError 被 except 吞掉，于是那条告警只剩写日志（人听不见）。现在给出真实现。
+_INSTALLED: dict = {}
+
+
+def install_bus(bus) -> None:
+    """登记装好的 VoiceBus，供模块级 announce() 用（panel/server.py 的 _wire_voice_bus 调）。"""
+    _INSTALLED["bus"] = bus
+
+
+async def announce(text: str, *, priority: int = 1) -> dict:
+    """模块级播报：① 有 bus 就交给它；② 没有/失败就退本机 SAPI；③ 都不行如实 ok:False。
+
+    每一步都标清走的哪条通道 —— 不许出现"报了但没人听见"还没有痕迹的情况。
+    """
+    t = str(text or "").strip()
+    if not t:
+        return {"ok": False, "通道": "", "reason": "空文本"}
+    bus = _INSTALLED.get("bus")
+    if bus is not None:
+        for attr in ("say", "speak", "notify", "announce"):
+            fn = getattr(bus, attr, None)
+            if not callable(fn):
+                continue
+            r = None
+            try:
+                r = fn(t, critical=(int(priority) == 0))
+            except TypeError:
+                try:
+                    r = fn(t)
+                except Exception:                            # noqa: BLE001
+                    continue
+            except Exception:                                # noqa: BLE001
+                continue
+            if asyncio.iscoroutine(r):
+                try:
+                    r = await r
+                except Exception:                            # noqa: BLE001
+                    continue
+            return {"ok": True, "通道": f"voice_bus.{attr}", "结果": r}
+    try:
+        from senses import voice_sapi as _vs
+        got = _vs.speak(t, taiwan=True)
+        return {"ok": bool(got.get("ok")), "通道": "sapi", "结果": got}
+    except Exception as exc:                                # noqa: BLE001
+        return {"ok": False, "通道": "", "reason": f"{type(exc).__name__}: {exc}"}
 

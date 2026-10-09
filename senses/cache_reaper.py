@@ -3,6 +3,7 @@
 import os, time, json, threading
 from pathlib import Path
 from dataclasses import dataclass
+from core.swallow import swallow as _swallow
 
 @dataclass
 class Budget:
@@ -42,7 +43,8 @@ class CacheReaper:
     @staticmethod
     def touch(path):
         try: os.utime(path, None)
-        except OSError: pass
+        except OSError as e:
+            _swallow(__file__, e)
 
     # ── 单目录回收 ──
     def reap_budget(self, b: Budget) -> tuple[int, int]:
@@ -63,8 +65,9 @@ class CacheReaper:
                 p.unlink()
                 total -= size
                 freed_bytes += size; freed_files += 1
-            except OSError:
-                pass
+            except OSError as e:
+                _swallow(__file__, e)
+
         return freed_bytes, freed_files
 
     # ── 全量回收 ──

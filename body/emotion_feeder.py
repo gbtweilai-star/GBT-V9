@@ -28,8 +28,9 @@ class EmotionFeeder:
         self._task: asyncio.Task | None = None
         try:
             director.feeder = self          # 让 /api/voice/emotion 能带上 feed_events
-        except Exception:
-            pass
+        except Exception as e:
+            from core import swallow as _sw; _sw.swallow(__file__, e)
+
 
     # ---- 状态持久（重启后不再重播同一边沿）-------------------------------
     async def load(self) -> None:
@@ -43,8 +44,9 @@ class EmotionFeeder:
         if row:
             try:
                 self.gate.load(json.loads(row["value"] if isinstance(row, dict) else row[0]))
-            except (TypeError, ValueError, json.JSONDecodeError):
-                pass
+            except (TypeError, ValueError, json.JSONDecodeError) as e:
+                from core import swallow as _sw; _sw.swallow(__file__, e)
+
 
     async def save(self) -> None:
         if self.db is None:
@@ -78,6 +80,22 @@ class EmotionFeeder:
                        "say": say, "at": now}
                 self.last_events.append(evt)
                 emitted.append(evt)
+                # ★接进面板告警状态机：真实事件（丢帧/漏扫/队列积压/死信/覆盖率回归）
+                #   既影响情绪与播报，也在 body_alerts 留一条可查记录（面板标红读它）。
+                if level != "ok":
+                    rec = getattr(self.db, "record_alert", None)
+                    if callable(rec):
+                        try:
+                            await rec(kind, {"feed": reading.feed, "metric": reading.key,
+                                             "value": reading.value, "level": level,
+                                             "label": reading.rule.label,
+                                             "evidence": reading.evidence or {}},
+                                      level=("critical" if severity == "critical" else
+                                             ("warning" if severity == "warning" else "info")),
+                                      bypass_freeze=True)
+                        except Exception as e:
+                            from core import swallow as _sw; _sw.swallow(__file__, e)
+
         if emitted:
             await self.save()
         return emitted
@@ -88,12 +106,14 @@ class EmotionFeeder:
         while not self._stop.is_set():
             try:
                 await self.poll_once()
-            except Exception:
-                pass
+            except Exception as e:
+                from core import swallow as _sw; _sw.swallow(__file__, e)
+
             try:
                 await asyncio.wait_for(self._stop.wait(), timeout=self.interval_s)
-            except asyncio.TimeoutError:
-                pass
+            except asyncio.TimeoutError as e:
+                from core import swallow as _sw; _sw.swallow(__file__, e)
+
 
     def start(self) -> asyncio.Task:
         if self._task is None or self._task.done():

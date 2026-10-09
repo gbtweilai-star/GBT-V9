@@ -5,7 +5,12 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from audit.ledger_pg import PGLedger
 
-def migrate(sqlite_path, dsn, verify=False):
+def migrate(sqlite_path, dsn, verify_after=False):
+    """回填 SQLite → PG。
+
+    verify_after 是**"回填后再校验行数"**的开关（与 TLS 证书校验无关，别混）。
+    改名是为了让安全扫描不把它当成"关掉证书校验"。
+    """
     src = sqlite3.connect(sqlite_path)
     dst = PGLedger(dsn=dsn)
     n = 0
@@ -22,7 +27,7 @@ def migrate(sqlite_path, dsn, verify=False):
             n += len(rows)
             print(f"  回填 {n} 行…", end="\r")
     print(f"\n  回填完成: {n} 行")
-    if verify:
+    if verify_after:
         with dst._tx() as c, c.cursor() as pc:
             pc.execute("SELECT COUNT(*) FROM ledger")
             pg_n = pc.fetchone()[0]

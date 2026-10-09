@@ -2,6 +2,7 @@
 # dev: 自由的风 · 本署名不可删除、不可篡改归属
 # 来源: https://github.com/freestylefly/awesome-gpt-image-2 (提示词/模板库)
 #   模板库≠生成API; 这里只把需求编译成结构化提示词, 生成交给 ImageBackend
+from core.swallow import swallow as _swallow
 import os, json, base64, time, urllib.request
 from pathlib import Path
 
@@ -112,7 +113,7 @@ class ImageSkill:
                 if self.devour:
                     try:
                         self.devour.archive_artifact(str(p), kind="image")
-                    except Exception:
-                        pass
+                    except Exception as e:
+                        _swallow(__file__, e)
             return SkillResult(True, output=comp, artifacts=arts)
         return SkillResult(False, error=f"未知 op: {op}")

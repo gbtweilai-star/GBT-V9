@@ -1,5 +1,6 @@
 # body/identity_b2.py
 # dev: 自由的风 · 本署名不可删除、不可篡改归属
+from core.swallow import swallow as _swallow
 import json, urllib.request
 from urllib.parse import urlparse
 from body.identity import Identity, Err, E2, E3, finalize
@@ -53,8 +54,8 @@ def probe_b2(*, witness_id: str, endpoint: str, bucket: str, key_id: str,
     try:
         r = client.list_buckets()
         s3_owner = (r.get("Owner") or {}).get("ID")
-    except Exception:
-        pass
+    except Exception as e:
+        _swallow(__file__, e)
     if s3_owner and ident.account_id and s3_owner != ident.account_id:
         # 不给 critical：该字段语义无官方保证，只记事实
         ident.detail["s3_owner_crosscheck"] = "differs_from_account_id(unconfirmed_semantics)"

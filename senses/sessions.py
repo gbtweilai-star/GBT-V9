@@ -3,6 +3,7 @@
 #
 # 原则: uptime 按心跳证据计算, 相邻心跳间隔 <= timeout 才计入;
 #       崩溃后断档部分不计, 避免虚增运行时长稀释丢帧率。
+from core.swallow import swallow as _swallow
 import os, time, uuid, threading
 from senses.sqldialect import txn
 from audit.ddl import run_script
@@ -109,8 +110,8 @@ class SessionTracker:
             while self.session_id:
                 try:
                     self.beat(frames_provider() if frames_provider else 0)
-                except Exception:
-                    pass
+                except Exception as e:
+                    _swallow(__file__, e)
                 time.sleep(self.interval)
         t = threading.Thread(target=_loop, daemon=True, name=f"hb-{self.tid}")
         t.start()

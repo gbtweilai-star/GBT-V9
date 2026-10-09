@@ -7,6 +7,7 @@ import json
 import uuid
 from contextlib import asynccontextmanager
 from typing import Any
+from core.swallow import swallow as _swallow
 
 _JSON_COLUMNS = (
     "verification_times", "color_metrics_delta", "effect_metrics",
@@ -83,8 +84,9 @@ def _decode_row(row: Any) -> dict[str, Any]:
             continue
         try:
             result[column] = json.loads(value)
-        except (json.JSONDecodeError, TypeError):
-            pass  # 旧数据非法 JSON 原样保留，不因读失败崩。
+        except (json.JSONDecodeError, TypeError) as e:
+            _swallow(__file__, e)
+  # 旧数据非法 JSON 原样保留，不因读失败崩。
     return result
 
 

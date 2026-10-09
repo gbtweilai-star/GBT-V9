@@ -4,6 +4,7 @@
 # 铁律（对齐安全规约）：所有外部输入一律参数绑定；本模块只统一"占位符/时间函数/
 # 列类型"这类**常量**差异，绝不参与含外部输入的 SQL 组装。
 from contextlib import contextmanager
+from core.swallow import swallow as _swallow
 
 _PG = "pg"
 
@@ -22,8 +23,9 @@ def cur(conn):
     finally:
         try:
             c.close()
-        except Exception:
-            pass
+        except Exception as e:
+            _swallow(__file__, e)
+
 
 
 @contextmanager

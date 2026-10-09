@@ -12,6 +12,7 @@ import subprocess
 import time
 
 from senses.sqldialect import is_pg, txn
+from core.swallow import swallow as _swallow
 
 WIN = int(os.environ.get("MEDIA_FAIL_WINDOW_SEC", "3600"))
 
@@ -84,8 +85,9 @@ def read_vram():
         m = pynvml.nvmlDeviceGetMemoryInfo(h)
         return {"used_mb": int(m.used) // 1048576,
                 "total_mb": int(m.total) // 1048576}, "nvml"
-    except Exception:
-        pass
+    except Exception as e:
+        _swallow(__file__, e)
+
     try:
         out = subprocess.check_output(
             ["nvidia-smi", "--query-gpu=memory.used,memory.total",

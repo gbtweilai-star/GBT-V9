@@ -5,6 +5,7 @@
 #       不念账户ID/凭据/指纹; 播报失败必须留文本并如实标记, 不许假报"已播"
 from __future__ import annotations
 import json, logging, os, time, uuid
+from core.swallow import swallow as _swallow
 
 log = logging.getLogger("body.voice")
 
@@ -107,7 +108,7 @@ async def reconcile_witness_snapshot(ledger, probe_rows, *, required, now_fn=tim
 
 
 # ═══════════ ② 渲染：critical 先念，degraded 合并成一句 ═══════════
-def render_utterance(events, *, valid: int, required: int) -> str:
+def render_utterance(events, *, valid: int, required: int, registered=None) -> str:
     crit = [e for e in events if e["priority"] == CRITICAL]
     lost = sorted({w for e in events if e["kind"] == "vote_lost" for w in e["witnesses"]})
     rest = sorted({w for e in events if e["kind"] == "vote_restored" for w in e["witnesses"]})
@@ -126,6 +127,13 @@ def render_utterance(events, *, valid: int, required: int) -> str:
                      f"有效见证 {valid}/{required}，要求 {required}。请检查身份探测配置。")
     elif low:
         parts.append(f"有效见证不足，当前 {valid}/{required}。")
+        if not registered:
+            # ★真机教训：只说"请检查身份探测配置"，主人无从下手。
+            # 未登记任何见证时，直接把需要的环境变量念出来。
+            parts.append("原因：还没有登记任何见证。需要先设置 "
+                         "BODY_WITNESS_编号_ENDPOINT、BODY_WITNESS_编号_BUCKET、"
+                         "BODY_WITNESS_编号_ACCESS_KEY_ID、BODY_WITNESS_编号_SECRET_ACCESS_KEY "
+                         "这类环境变量，才能登记独立见证。")
     if rest and not parts:                      # 归位只在没有坏消息时单独念
         parts.append(f"{'、'.join(spoken_name(w) for w in rest)} 已恢复计票；"
                      f"有效见证 {valid}/{required}。")
@@ -135,7 +143,9 @@ def render_utterance(events, *, valid: int, required: int) -> str:
 # ═══════════ ③ flush：合并窗口 + 优先级 + 打断 + 失败回退 ═══════════
 async def flush_voice_outbox(ledger, tts, *, now_fn=time.time,
                              merge_window=2.0, crit_window=0.5,
-                             degraded_cooldown=30.0, speak_fn=None):
+                             degraded_cooldown=float(os.environ.get(
+                                 "V9_VOICE_DEGRADED_COOLDOWN", "1800")),
+                             speak_fn=None):
     now = now_fn()
     rows = await ledger.fetch_all(
         "SELECT * FROM witness_voice_outbox WHERE state='pending' "
@@ -165,7 +175,13 @@ async def flush_voice_outbox(ledger, tts, *, now_fn=time.time,
                    "reason_code": r["reason_code"]} for r in batch]
         # ★数字只从 snapshots 取：用批内同 revision 的计数，绝不重算
         snap = await ledger.fetch_one("SELECT * FROM witness_snapshot WHERE id=1")
-        text = render_utterance(events, valid=snap["valid_count"], required=snap["required"])
+        try:
+            reg = await ledger.fetch_all("SELECT witness_id FROM body_witness_status")
+            reg_n = len(reg or [])
+        except Exception:                                   # noqa: BLE001
+            reg_n = None
+        text = render_utterance(events, valid=snap["valid_count"],
+                                required=snap["required"], registered=reg_n)
         ids = [r["event_id"] for r in batch]
         await _mark(ledger, ids, "playing", now)
         try:
@@ -243,8 +259,9 @@ async def _tts_busy(tts) -> bool:
     try:
         if q is not None:
             return q.qsize() > 0
-    except Exception:
-        pass
+    except Exception as e:
+        _swallow(__file__, e)
+
     return False
 
 

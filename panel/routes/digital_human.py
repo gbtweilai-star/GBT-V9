@@ -3,6 +3,7 @@
 #
 # 纪律: 页面数字一律来自 witness_snapshot / body_read_snapshots（与卡片同源）；
 #       SSE 断线用 Last-Event-ID 补拉（含 spoken_failed 的文本，不许丢话）。
+from core.swallow import swallow as _swallow
 import asyncio
 import json
 
@@ -30,8 +31,8 @@ def publish(session_id: str, payload: dict) -> None:
             try:
                 q.get_nowait()
                 q.put_nowait(payload)
-            except Exception:                      # noqa: BLE001
-                pass
+            except Exception as e:
+                _swallow(__file__, e)
 
 
 class Ask(BaseModel):

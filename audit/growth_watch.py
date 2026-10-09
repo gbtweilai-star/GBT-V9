@@ -4,6 +4,7 @@
 # 阈值（经复核校准）:
 #   70% 告警 | 85% 触发归档 | 95% 保护模式（限流）
 #   预测: 若按当前斜率将在「扩容耗时×2」内到 80%，提前扩容
+from core.swallow import swallow as _swallow
 import time, threading
 from datetime import datetime
 from senses.sqldialect import txn
@@ -96,6 +97,7 @@ class GrowthWatch:
         def loop():
             while not self._stop.wait(self.interval):
                 try: self.sample()
-                except Exception: pass
+                except Exception as e:
+                    _swallow(__file__, e)
         threading.Thread(target=loop, daemon=True, name="growth-watch").start()
     def stop(self): self._stop.set()

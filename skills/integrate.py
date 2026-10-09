@@ -1,5 +1,6 @@
 # skills/integrate.py —— 把规则内核注入大脑/工程师, 并注册全部原生能力
 # dev: 自由的风 · 本署名不可删除、不可篡改归属
+from core.swallow import swallow as _swallow
 from skills.rules import EngineeringRules, rules_text
 from skills.diagram import DiagramSkill
 from skills.imagegen import ImageSkill
@@ -13,20 +14,20 @@ def build_registry(ledger=None, brain=None, devour=None, panel=None):
         from skills.native_codex import CodexTool
 
         reg.register(CodexTool(ledger=ledger, brain=brain))   # Codex = V9 的编程工具之一
-    except Exception:
-        pass
+    except Exception as e:
+        _swallow(__file__, e)
     try:
         from skills.engine import CoderRouter
 
         reg.register(CoderRouter(brain, workspace="."))   # coder.engine@1
-    except Exception:
-        pass
+    except Exception as e:
+        _swallow(__file__, e)
     try:
         from senses.voice import VoiceAdapter
 
         reg.register(VoiceAdapter(ledger=ledger, brain=brain))  # voice.io@1
-    except Exception:
-        pass
+    except Exception as e:
+        _swallow(__file__, e)
     reg.register(DiagramSkill(devour=devour, brain=brain))
     reg.register(ImageSkill(devour=devour))
     return reg

@@ -6,6 +6,7 @@
 #   - 等 GPU 期间仍可 heartbeat 续租; 租约过期被回收重抢
 #   - 去重键 = project_id + stage + params_hash (含 stage, 防跨阶段误合并)
 #   - 重试有上限的指数退避 + 抖动; 耗尽转死信
+from core.swallow import swallow as _swallow
 import os, time, json, uuid, hashlib, threading
 from senses.sqldialect import txn
 from audit.ddl import run_script
@@ -234,6 +235,6 @@ class JobQueue:
         d = dict(zip(cols, row))
         try:
             d["params"] = json.loads(d.get("params") or "{}")
-        except Exception:
-            pass
+        except Exception as e:
+            _swallow(__file__, e)
         return d

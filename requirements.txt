@@ -1,59 +1,20 @@
-ffmpeg            # FFV1 无损封装 + 拼接 + 转码预览，缺了吞噬归档全废
-docker            # 跑 CLIProxyAPI 网关
-ollama            # 本机 Qwen 大脑（可选，但推荐）
+# GBT小土豆V9 · 运行依赖（**只放能通过 PEP 508 校验的 pip 包**）
+# 历史坑 1：这里曾混入 OPENAI_API_KEY=... 之类环境变量行 ⇒ pip 报 Invalid requirement ⇒ CI Parity 失败。
+# 历史坑 2：这里还混过 shell 命令（uvicorn/docker/ollama 那种）⇒ 同样把 pip 弄挂。
+# 规矩：环境变量 → .env（见 .env.example）；shell 命令 → docs/安装与运行.md；这里只留 pip 包。
+# 外部程序（不是 pip 包，需另装）：ffmpeg · docker · ollama —— 装法见 README。
 
-# ═══ 主脑 LLM 网关（CLIProxyAPI）═══
-OPENAI_API_KEY=tk-brain-000                    # 主脑的客户端 key
-OPENAI_BASE_URL=http://127.0.0.1:8317/v1       # 网关地址
-CLI_PROXY_MGMT_KEY=主脑管理密钥                 # 仅主脑持，触手不可见
-
-# ═══ 本机 Qwen（真·无限制大脑）═══
-OLLAMA_HOST=http://127.0.0.1:11434
-
-# ═══ R2 对象存储（吞噬能温层）═══
-CLOUDFLARE_ACCOUNT_ID=xxx
-CLOUDFLARE_R2_ACCESS_KEY_ID=xxx
-CLOUDFLARE_R2_SECRET_ACCESS_KEY=xxx
-R2_BUCKET_NAME=tentacle-archive
-
-# ═══ 吞噬能 ─═
-DEVOUR_DIR=devoured/t1-eye                     # 落帧目录
-DEVOUR_FPS=30                                  # 采集帧率
-LEDGER_DB=tentacle_ledger.db
-
-# ═══ 分层存储水位 ═══
-STORE_HIGH=0.85                                # 高于此水位触发归档
-STORE_LOW=0.60                                 # 降到此水位停手
-SEG_FRAMES=1800                                # 每段帧数（30fps=60秒）
-KEEP_LAST_SEGMENTS=2                           # 本地保留最近N段
-
-# ═══ 缓存回收 ═══
-PREVIEW_CACHE_MB=2048                          # _preview 上限
-PULL_CACHE_MB=5120                             # _cache 上限
-REAP_INTERVAL_SEC=120                          # 回收周期
-
-# ═══ 面板 ═══
-PANEL_PORT=8765
-
-# ── 0. 装依赖 ──
-python -m venv .venv && source .venv/bin/activate
-pip install -r requirements.txt
-sudo apt install ffmpeg                        # 或 brew install ffmpeg
-
-# ── 1. 网关（一套上游凭据，多把隔离钥匙）──
-cp config.example.yaml config.yaml             # 按前面 v8 配置改
-docker compose up -d                           # → :8317
-
-# ── 2. 本机 Qwen 大脑 ──
-ollama serve &                                 # → :11434
-ollama pull qwen2.5:27b                        # 显存<24G 换 14b/7b
-
-# ── 3. 面板（另开终端）──
-export $(cat .env | xargs)
-uvicorn panel.server:app --port 8765           # → http://127.0.0.1:8765
-
-# ── 4. 验收（真读数，不拿绿顶）──
-python audit/stack_acceptance.py --with-local
-
-# ── 5. 总装运行 ──
-python main.py --root /你要扫描的项目路径 --fps 30
+fastapi>=0.110
+uvicorn[standard]>=0.27
+starlette>=0.36
+python-multipart>=0.0.9
+pytest>=8.0
+pytest-asyncio>=0.23
+pytest-cov>=5.0
+coverage>=7.4
+aiosqlite>=0.20
+asyncpg>=0.29
+numpy>=1.26
+pillow>=10.0
+mss>=9.0
+playwright>=1.44

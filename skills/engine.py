@@ -13,6 +13,7 @@
 import os, json, shutil, subprocess, tempfile
 from dataclasses import dataclass, field
 from pathlib import Path
+from core.swallow import swallow as _swallow
 
 
 @dataclass
@@ -69,8 +70,9 @@ class CodexEngine:
             for line in (r.stdout or "").splitlines():
                 try:
                     events.append(json.loads(line))
-                except Exception:
-                    pass
+                except Exception as e:
+                    _swallow(__file__, e)
+
             diff, files = "", []
             if has_git:
                 diff = subprocess.run(["git", "-C", str(repo), "diff"],
@@ -138,6 +140,29 @@ class CoderRouter:
     def engines(self):
         return ([self.codex, self.brain_engine] if self.prefer == "codex"
                 else [self.brain_engine, self.codex])
+
+    def probe(self):
+        """真自查：路由上至少有一个可用引擎（Codex CLI 或自研 Brain）才算可用。
+
+        病因（2026-10-07 真机踩到）：本类具备 NativeSkill 的"形"（name/version/run/spec），
+        却漏了契约硬要求的 probe() ⇒ ① SkillRegistry.call("coder") 必抛
+        AttributeError('CoderRouter' object has no attribute 'probe')，能力**实际调用不了**；
+        ② OctopBridge.tool_manifest() 遍历注册表时**整条清单崩**（Octop 侧能力发现面全灭）。
+        这里按契约补齐真自查：逐个引擎问 available()，如实汇报，绝不伪报成功。
+        """
+        from skills.native import Availability
+
+        probes = []
+        for e in self.engines():
+            try:
+                probes.append({"engine": e.name, "available": bool(e.available())})
+            except Exception as exc:                                   # noqa: BLE001
+                probes.append({"engine": e.name, "available": False,
+                               "error": f"{type(exc).__name__}: {exc}"})
+        ok = any(p["available"] for p in probes)
+        reason = (f"可用引擎: {[p['engine'] for p in probes if p['available']]}" if ok
+                  else "无可用编程引擎（Codex CLI 不可用且自研 Brain 未就绪）")
+        return Availability(ok, reason, {"engines": probes, "prefer": self.prefer})
 
     def spec(self) -> dict:
         return {

@@ -8,6 +8,7 @@
 #   ⑦ 语音：掉票跳变才开口、播报失败留文本不假报已播。
 import asyncio
 import json
+import re
 
 import pytest
 
@@ -83,7 +84,11 @@ def test_stale_snapshot_says_unknown(ready_db):
          json.dumps({"coverage": "observed", "depth": {"queued": 3}}), "[]")))
     res = run(read_snapshot(ready_db, "queue"))
     assert res.stale is True and res.unknown_reason == "stale"
-    assert "无法确认" in res.safe_sentence and "3" not in res.safe_sentence
+    assert "无法确认" in res.safe_sentence
+    # 断言的是"过期读数不被当成当前值报出来"：先摘掉合法的年龄片段
+    # （"最近一次核验：xxxxx 小时前"里的数字是时间，不是读数），再看正文不含 3
+    body = re.sub(r"最近一次核验：[^。]*。", "", res.safe_sentence)
+    assert "3" not in body, f"过期读数不该出现在正文里：{body}"
 
 
 def test_fresh_snapshot_reports_real_numbers(ready_db):

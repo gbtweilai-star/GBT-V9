@@ -1,0 +1,497 @@
+# GBT小土豆V9 · Blender 场景模板（由 core/blender.py 读入并按占位符替换后交给 blender 跑）
+# dev: 自由的风 · 本署名不可删除、不可篡改归属
+#
+# 目标（主人 2026-10-07）："打磨 3D（零成本）要逼真自然"。
+# 逼真靠四件事一起做，缺一样都会露馅：
+#   ① 形体：五官（眼+眼睑睫毛/眉/鼻/唇）、手指与长指甲、发丝分片、西装翻领领带、鞋型 —— 不是胶囊素体
+#   ② 材质：皮肤次表面散射、布料粗糙+绒面、皮鞋高光、指甲/眼睛/唇的专门材质
+#   ③ 光：影棚三点光（主光/补光/轮廓光）+ 渐变环境 + 地面接影 —— 人"站得住"才自然
+#   ④ 镜头与色彩：透视 3/4 机位 + 景深虚化背景 + AgX 电影色 + 64 采样光追 AO
+
+import bpy, json, math
+from mathutils import Vector, Quaternion
+
+DATA = json.loads(r'''__DATA__''')
+OUT_PNG = r"__OUT_PNG__"
+OUT_GLB = r"__OUT_GLB__"
+MODE = "__MODE__"                 # still（单帧+glb） | preview（转台+序列）
+W, H = __W__, __H__
+ANGLES, STRIPS = __ANGLES__, __STRIPS__
+
+# ───────────────────────── 场景与渲染 ─────────────────────────
+bpy.ops.wm.read_factory_settings(use_empty=True)
+scene = bpy.context.scene
+try:
+    scene.render.engine = "BLENDER_EEVEE_NEXT"
+except Exception:
+    scene.render.engine = "BLENDER_EEVEE"
+try:
+    scene.eevee.taa_render_samples = 64
+    scene.eevee.use_raytracing = True          # 光追 AO / 反射：逼真的关键之一
+    scene.eevee.use_shadows = True
+except Exception:
+    pass
+scene.render.resolution_x, scene.render.resolution_y = W, H
+scene.render.film_transparent = False
+try:
+    scene.view_settings.view_transform = "AgX"          # 电影色（比 Standard 更像照片）
+    scene.view_settings.look = "AgX - Medium Contrast"
+except Exception:
+    scene.view_settings.view_transform = "Standard"
+
+# 世界：上下双色渐变（影棚背景布），比纯灰更自然
+world = bpy.data.worlds.new("W"); world.use_nodes = True
+nt = world.node_tree
+for n in list(nt.nodes):
+    if n.type != "OUTPUT_WORLD":
+        nt.nodes.remove(n)
+out = [n for n in nt.nodes if n.type == "OUTPUT_WORLD"][0]
+grad = nt.nodes.new("ShaderNodeTexGradient"); grad.gradient_type = "LINEAR"
+ramp = nt.nodes.new("ShaderNodeValToRGB")
+ramp.color_ramp.elements[0].color = (0.055, 0.06, 0.075, 1)
+ramp.color_ramp.elements[1].color = (0.30, 0.32, 0.36, 1)
+mapping = nt.nodes.new("ShaderNodeMapping")
+texco = nt.nodes.new("ShaderNodeTexCoord")
+mapping.inputs["Rotation"].default_value = (0, 0, 0)
+bg = nt.nodes.new("ShaderNodeBackground"); bg.inputs["Strength"].default_value = 0.55
+nt.links.new(texco.outputs["Generated"], mapping.inputs["Vector"])
+nt.links.new(mapping.outputs["Vector"], grad.inputs["Vector"])
+nt.links.new(grad.outputs["Color"], ramp.inputs["Fac"])
+nt.links.new(ramp.outputs["Color"], bg.inputs["Color"])
+nt.links.new(bg.outputs["Background"], out.inputs["Surface"])
+scene.world = world
+
+B = {b["name"]: b for b in DATA["bones"]}
+zs = [b["z"] for b in DATA["bones"]] + [b["pz"] for b in DATA["bones"]]
+xs = [b["x"] for b in DATA["bones"]]
+zmin, zmax = min(zs), max(zs)
+xmid = (min(xs) + max(xs)) / 2.0
+zc = (zmin + zmax) / 2.0
+HEIGHT = (zmax - zmin)
+
+# ───────────────────────── 材质 ─────────────────────────
+def mat(name):
+    p = DATA["mat"][name]
+    m = bpy.data.materials.new(name); m.use_nodes = True
+    nt2 = m.node_tree
+    bsdf = nt2.nodes.get("Principled BSDF")
+    r, g, b = p["base"]
+    bsdf.inputs["Base Color"].default_value = (r, g, b, 1.0)
+    bsdf.inputs["Roughness"].default_value = p.get("rough", 0.6)
+    if "Metallic" in bsdf.inputs:
+        bsdf.inputs["Metallic"].default_value = p.get("metal", 0.0)
+    # 皮肤：次表面散射（人皮透出来的那点光，最影响"像不像活人"）
+    if p.get("sss"):
+        for key, val in (("Subsurface Weight", p["sss"]), ("Subsurface Scale", 0.02),
+                         ("Subsurface Radius", (0.36, 0.14, 0.09))):
+            if key in bsdf.inputs:
+                try:
+                    bsdf.inputs[key].default_value = val
+                except Exception:
+                    pass
+    # 布料：绒面（Sheen）让西装不像塑料
+    if p.get("sheen") and "Sheen Weight" in bsdf.inputs:
+        bsdf.inputs["Sheen Weight"].default_value = p["sheen"]
+        if "Sheen Roughness" in bsdf.inputs:
+            bsdf.inputs["Sheen Roughness"].default_value = 0.35
+    if "Specular IOR Level" in bsdf.inputs:
+        bsdf.inputs["Specular IOR Level"].default_value = p.get("spec", 0.5)
+    # 布料/皮肤加一点噪声凹凸：表面不是数学光滑，才不像塑料
+    if p.get("noise"):
+        tex = nt2.nodes.new("ShaderNodeTexNoise"); tex.inputs["Scale"].default_value = p["noise"]
+        bump = nt2.nodes.new("ShaderNodeBump")
+        bump.inputs["Strength"].default_value = p.get("bump", 0.12)
+        nt2.links.new(tex.outputs["Fac"], bump.inputs["Height"])
+        nt2.links.new(bump.outputs["Normal"], bsdf.inputs["Normal"])
+    m.diffuse_color = (r, g, b, 1.0)
+    return m
+
+# ───────────────────────── 几何工具 ─────────────────────────
+def _basis(a, b):
+    dx, dy, dz = b[0]-a[0], b[1]-a[1], b[2]-a[2]
+    ln = math.sqrt(dx*dx + dy*dy + dz*dz) or 1e-6
+    d = (dx/ln, dy/ln, dz/ln)
+    rx, ry, rz = (0.0, 1.0, 0.0) if abs(d[2]) < 0.9 else (1.0, 0.0, 0.0)
+    u = (d[1]*rz - d[2]*ry, d[2]*rx - d[0]*rz, d[0]*ry - d[1]*rx)
+    ul = math.sqrt(sum(c*c for c in u)) or 1e-6
+    u = tuple(c/ul for c in u)
+    v = (d[1]*u[2] - d[2]*u[1], d[2]*u[0] - d[0]*u[2], d[0]*u[1] - d[1]*u[0])
+    return d, u, v, ln
+
+def push_path(verts, faces, pts, radii, seg=12, cap=True, wobble=0.0):
+    """沿折线放一圈圈（半径可逐点给）→ 肢体 / 发丝 / 手指 / 兔耳都用它。
+
+    wobble>0 时给横截面加正弦起伏（做布褶、发束的蓬松）。
+    """
+    ring_idx = []
+    for i, p in enumerate(pts):
+        if i == 0:
+            nxt = pts[1]
+            _, _, _, _ = None, None, None, None
+            t = (nxt[0]-p[0], nxt[1]-p[1], nxt[2]-p[2])
+        elif i == len(pts)-1:
+            prv = pts[i-1]
+            t = (p[0]-prv[0], p[1]-prv[1], p[2]-prv[2])
+        else:
+            a, b = pts[i-1], pts[i+1]
+            t = (b[0]-a[0], b[1]-a[1], b[2]-a[2])
+        tl = math.sqrt(sum(c*c for c in t)) or 1e-6
+        d = tuple(c/tl for c in t)
+        rx, ry, rz = (0.0, 1.0, 0.0) if abs(d[2]) < 0.9 else (1.0, 0.0, 0.0)
+        u = (d[1]*rz - d[2]*ry, d[2]*rx - d[0]*rz, d[0]*ry - d[1]*rx)
+        ul = math.sqrt(sum(c*c for c in u)) or 1e-6
+        u = tuple(c/ul for c in u)
+        v = (d[1]*u[2] - d[2]*u[1], d[2]*u[0] - d[0]*u[2], d[0]*u[1] - d[1]*u[0])
+        rr = radii[i]
+        start = len(verts)
+        for k in range(seg):
+            th = 2.0*math.pi*k/seg
+            mul = 1.0 + wobble*math.sin(th*3.0) if wobble else 1.0
+            cu, su = math.cos(th)*rr*mul, math.sin(th)*rr*mul
+            verts.append((p[0] + u[0]*cu + v[0]*su,
+                          p[1] + u[1]*cu + v[1]*su,
+                          p[2] + u[2]*cu + v[2]*su))
+        ring_idx.append(start)
+    for i in range(len(pts)-1):
+        s0, s1 = ring_idx[i], ring_idx[i+1]
+        for k in range(seg):
+            j = (k+1) % seg
+            faces.append((s0+k, s0+j, s1+j, s1+k))
+    if cap:
+        c0 = len(verts); verts.append(tuple(pts[0]))
+        c1 = len(verts); verts.append(tuple(pts[-1]))
+        for k in range(seg):
+            j = (k+1) % seg
+            faces.append((c0, ring_idx[0]+j, ring_idx[0]+k))
+            faces.append((c1, ring_idx[-1]+k, ring_idx[-1]+j))
+    return ring_idx[0]
+
+def push_seg(verts, faces, a, b, r1, r2=None, seg=12):
+    return push_path(verts, faces, [a, b], [r1, r2 if r2 is not None else r1], seg=seg)
+
+def push_ball(verts, faces, c, rx, ry, rz, seg=16, rings=10):
+    cx, cy, cz = c
+    idx0 = len(verts)
+    rows = []
+    for r in range(1, rings):
+        phi = math.pi * r / rings
+        sp, cp = math.sin(phi), math.cos(phi)
+        row = []
+        for k in range(seg):
+            th = 2.0*math.pi*k/seg
+            row.append(len(verts))
+            verts.append((cx + rx*sp*math.cos(th), cy + ry*sp*math.sin(th), cz + rz*cp))
+        rows.append(row)
+    top = len(verts); verts.append((cx, cy, cz + rz))
+    bot = len(verts); verts.append((cx, cy, cz - rz))
+    for r in range(len(rows)-1):
+        for k in range(seg):
+            j = (k+1) % seg
+            faces.append((rows[r][k], rows[r][j], rows[r+1][j], rows[r+1][k]))
+    for k in range(seg):
+        j = (k+1) % seg
+        faces.append((top, rows[0][k], rows[0][j]))
+        faces.append((bot, rows[-1][j], rows[-1][k]))
+    return idx0
+
+def push_box(verts, faces, a, b, w, t):
+    """扁平件（翻领 / 领带 / 指甲 / 鞋底）：沿 a→b 的扁长方体。"""
+    d, u, v, ln = _basis(a, b)
+    idx0 = len(verts)
+    for s in (0.0, 1.0):
+        cx, cy, cz = a[0]+d[0]*ln*s, a[1]+d[1]*ln*s, a[2]+d[2]*ln*s
+        for su, sv in ((-1, -1), (1, -1), (1, 1), (-1, 1)):
+            verts.append((cx + u[0]*w/2*su + v[0]*t/2*sv,
+                          cy + u[1]*w/2*su + v[1]*t/2*sv,
+                          cz + u[2]*w/2*su + v[2]*t/2*sv))
+    for k in range(4):
+        j = (k+1) % 4
+        faces.append((idx0+k, idx0+j, idx0+4+j, idx0+4+k))
+    faces.append((idx0, idx0+1, idx0+2, idx0+3))
+    faces.append((idx0+4, idx0+7, idx0+6, idx0+5))
+    return idx0
+
+# ───────────────────────── 骨架 ─────────────────────────
+arm_data = bpy.data.armatures.new("v9_rig")
+arm_obj = bpy.data.objects.new("v9_rig", arm_data)
+scene.collection.objects.link(arm_obj)
+bpy.context.view_layer.objects.active = arm_obj
+bpy.ops.object.mode_set(mode="EDIT")
+eb = arm_data.edit_bones
+for b in DATA["bones"]:
+    e = eb.new(b["name"])
+    e.head = (b["px"], 0.0, b["pz"])
+    e.tail = (b["x"], 0.0, b["z"])
+    if abs(e.tail[0]-e.head[0]) < 1e-6 and abs(e.tail[2]-e.head[2]) < 1e-6:
+        e.tail = (e.head[0]+0.01, 0.0, e.head[2])
+for b in DATA["bones"]:
+    e = eb.get(b["name"]); p = eb.get(b["parent"]) if b["parent"] else None
+    if e and p:
+        e.parent = p; e.use_connect = False
+bpy.ops.object.mode_set(mode="OBJECT")
+
+def J(n):
+    b = B.get(n)
+    return (b["x"], 0.0, b["z"]) if b else (0.0, 0.0, 0.0)
+
+def JP(n):
+    b = B.get(n)
+    return (b["px"], 0.0, b["pz"]) if b else J(n)
+
+# ───────────────────────── 身体（材质分组 → 每组一个网格） ─────────────────────────
+PARTS = {}     # 材质名 → [(骨名, 生成函数, 参数)]
+def part(group, bone, fn, *args, **kw):
+    PARTS.setdefault(group, []).append((bone, fn, args, kw))
+
+# 躯干：髋→脊→颈 三段半径（收腰 + 胸廓）——比圆锥像人
+if "hip" in B and "neck" in B:
+    hip, sp, nk = J("hip"), J("spine"), J("neck")
+    chest = (sp[0], 0.0, (sp[2]+nk[2])/2.0 + 0.06)
+    part("suit", "spine", push_path,
+         [(hip[0], 0.0, hip[2]+0.12), sp, chest, (nk[0], 0.0, nk[2]-0.02)],
+         [0.34, 0.27, 0.33, 0.17], 16, True, 0.0)
+    part("suit", "spine", push_ball, J("hip"), 0.33, 0.26, 0.30)      # 臀
+if "neck" in B:                                                        # 胸（西装下的一点体积，自然）
+    sp = J("spine"); nk = J("neck")
+    cy = -0.13
+    # 衬衫前襟 + 西装翻领 + 领带 + 领口
+    part("shirt", "neck", push_box, (nk[0], -0.20, nk[2]+0.02), (nk[0], -0.21, nk[2]-0.52),
+         0.26, 0.06)
+    part("tie", "neck", push_box, (nk[0], -0.25, nk[2]-0.02), (nk[0], -0.26, nk[2]-0.50),
+         0.07, 0.04)
+    part("suit", "neck", push_box, (nk[0]-0.02, -0.20, nk[2]+0.03),
+         (nk[0]-0.20, -0.18, nk[2]-0.46), 0.10, 0.05)                  # 左翻领
+    part("suit", "neck", push_box, (nk[0]+0.02, -0.20, nk[2]+0.03),
+         (nk[0]+0.20, -0.18, nk[2]-0.46), 0.10, 0.05)                  # 右翻领
+    part("suit", "neck", push_path, [(nk[0], 0.0, nk[2]+0.04), (nk[0], 0.0, nk[2]-0.06)],
+         [0.19, 0.17], 14)                                             # 衣领
+if "hip" in B:                                                         # 紧身短裙（下摆张开）
+    hip = J("hip")
+    part("skirt", "hip", push_path,
+         [(hip[0], 0.0, hip[2]+0.06), (hip[0], 0.0, hip[2]-0.24), (hip[0], 0.0, hip[2]-0.46)],
+         [0.33, 0.35, 0.42], 18, True, 0.030)
+for s in ("L", "R"):
+    # 袖子（肩→肘） 小臂（肘→腕） 手（掌 + 四指 + 拇指 + 指甲）
+    part("suit", f"arm{s}", push_path, [JP(f"arm{s}"), J(f"arm{s}")], [0.13, 0.115], 12)
+    part("suit", f"fore{s}", push_path, [JP(f"fore{s}"), J(f"fore{s}")], [0.105, 0.075], 12)
+    wrist = J(f"hand{s}"); d, u, v, _ = _basis(JP(f"hand{s}"), wrist)
+    palm = (wrist[0]+d[0]*0.06, wrist[1]+d[1]*0.06, wrist[2]+d[2]*0.06)
+    part("skin", f"hand{s}", push_ball, palm, 0.095, 0.055, 0.105)
+    for fi, off in enumerate((-0.045, -0.015, 0.015, 0.045)):
+        base = (palm[0]+u[0]*off, palm[1]+u[1]*off, palm[2]+u[2]*off)
+        tip = (base[0]+d[0]*0.19, base[1]+d[1]*0.19, base[2]+d[2]*0.19)
+        part("skin", f"hand{s}", push_path, [base, tip], [0.026, 0.020], 8)
+        nail = (tip[0]+d[0]*0.02, tip[1]+d[1]*0.02, tip[2]+d[2]*0.02)
+        part("nails", f"hand{s}", push_ball, nail, 0.020, 0.012, 0.036)   # 长指甲
+    thb = (palm[0]-u[0]*0.07, palm[1]-u[1]*0.07, palm[2]-u[2]*0.07)
+    tht = (thb[0]+d[0]*0.07-u[0]*0.05, thb[1]+d[1]*0.07-u[1]*0.05, thb[2]+d[2]*0.07-u[2]*0.05)
+    part("skin", f"hand{s}", push_path, [thb, tht], [0.024, 0.018], 8)
+    # 腿：大腿 / 小腿 / 脚踝（裸腿，照原图）
+    part("skin", f"thigh{s}", push_path, [JP(f"thigh{s}"), J(f"thigh{s}")], [0.16, 0.115], 14)
+    part("skin", f"shin{s}", push_path, [JP(f"shin{s}"), J(f"shin{s}")], [0.115, 0.065], 14)
+    # 白色高跟：鞋底 + 鞋面 + 细跟
+    ank = J(f"foot{s}"); toe = (ank[0], -0.16, ank[2]-0.055)
+    part("white", f"foot{s}", push_path, [JP(f"foot{s}"), (ank[0], 0.0, ank[2]+0.02)],
+         [0.080, 0.090], 12)                                   # 靴筒：接住小腿
+    part("white", f"foot{s}", push_box, (ank[0], 0.02, ank[2]-0.05), toe, 0.22, 0.13)
+    part("white", f"foot{s}", push_ball, (ank[0], -0.03, ank[2]-0.11), 0.105, 0.105, 0.075)
+    part("white", f"foot{s}", push_path,
+         [(ank[0], 0.07, ank[2]-0.13), (ank[0], 0.12, ank[2]-0.36)], [0.036, 0.024], 8)
+part("skin", "head", push_path, [JP("head"), J("head")], [0.075, 0.080], 12)   # 颈
+if "head" in B:
+    hb = B["head"]
+    hx, hz = hb["x"], hb["z"] + hb["len"] * 0.52
+    hs = 1.55                                # ★头整体放大：参考图是大头比例，小头会显得不像人
+    # 头：颅 + 下颌收窄（人头的形状，不是球）
+    part("skin", "head", push_ball, (hx, 0.02, hz + 0.05*hs), 0.215*hs, 0.235*hs, 0.245*hs)
+    part("skin", "head", push_ball, (hx, -0.03, hz - 0.17*hs), 0.165*hs, 0.185*hs, 0.150*hs)
+    fy = -0.225 * hs                                     # 面部正面
+    for side in (-1, 1):                                 # 眼白 + 瞳 + 睫毛线 + 眉
+        ex = hx + side * 0.085 * hs
+        part("eye_w", "head", push_ball, (ex, fy + 0.02, hz + 0.045*hs),
+             0.052*hs, 0.030*hs, 0.038*hs)
+        part("eye_d", "head", push_ball, (ex, fy - 0.014, hz + 0.042*hs),
+             0.030*hs, 0.022*hs, 0.028*hs)
+        part("lash", "head", push_box, (ex - 0.05*hs, fy - 0.008, hz + 0.078*hs),
+             (ex + 0.05*hs, fy - 0.008, hz + 0.072*hs), 0.024*hs, 0.013*hs)
+        part("hair", "head", push_box, (ex - 0.05*hs, fy + 0.010, hz + 0.135*hs),
+             (ex + 0.05*hs, fy + 0.006, hz + 0.152*hs), 0.020*hs, 0.012*hs)
+    part("skin", "head", push_ball, (hx, fy + 0.03, hz - 0.045*hs),
+         0.030*hs, 0.042*hs, 0.030*hs)                   # 鼻
+    part("lips", "head", push_ball, (hx, fy + 0.015, hz - 0.108*hs),
+         0.055*hs, 0.030*hs, 0.024*hs)                   # 唇
+    # 头发：发帽 + 刘海（只盖额头）+ 侧发 + 后长发（波浪收尖）
+    part("hair", "head", push_ball, (hx, 0.035, hz + 0.075*hs),
+         0.240*hs, 0.250*hs, 0.250*hs)
+    part("hair", "head", push_ball, (hx, 0.010, hz + 0.140*hs),
+         0.225*hs, 0.230*hs, 0.150*hs)
+    for i2 in range(7):
+        t = (i2 - 3) / 3.0
+        part("hair", "head", push_path,
+             [(hx + t*0.19*hs, -0.17*hs, hz + 0.30*hs),
+              (hx + t*0.23*hs, -0.225*hs, hz + 0.225*hs),
+              (hx + t*0.25*hs, -0.232*hs, hz + 0.165*hs)],
+             [0.050*hs, 0.040*hs, 0.020*hs], 8)
+    for side in (-1, 1):                                 # 侧发（贴颊下去）
+        part("hair", "head", push_path,
+             [(hx + side*0.21*hs, 0.00, hz + 0.06*hs),
+              (hx + side*0.25*hs, -0.055*hs, hz - 0.30*hs),
+              (hx + side*0.23*hs, -0.02, hz - 0.70*hs)],
+             [0.085*hs, 0.075*hs, 0.035*hs], 10)
+    for i2 in range(5):                                  # 后长发
+        t = (i2 - 2) / 2.0
+        pts = []
+        for k2 in range(5):
+            f = k2 / 4.0
+            pts.append((hx + t*0.20*hs + math.sin(f*3.4)*0.035*hs,
+                        0.16 + f*0.12,
+                        hz - 0.06*hs - f*1.15))
+        part("hair", "head", push_path, pts,
+             [0.120*hs, 0.120*hs, 0.105*hs, 0.070*hs, 0.026*hs], 10)
+    for side in (-1, 1):                                 # 兔耳（弯曲 + 内衬粉）
+        pts = [(hx + side*0.10*hs, 0.02, hz + 0.20*hs),
+               (hx + side*0.18*hs, 0.05, hz + 0.62*hs),
+               (hx + side*0.21*hs, 0.02, hz + 1.10*hs)]
+        part("hair", "head", push_path, pts, [0.075*hs, 0.070*hs, 0.026*hs], 10)
+        pts2 = [(hx + side*0.10*hs, -0.02, hz + 0.25*hs),
+                (hx + side*0.17*hs, 0.015, hz + 0.64*hs),
+                (hx + side*0.19*hs, -0.005, hz + 1.02*hs)]
+        part("inner", "head", push_path, pts2, [0.040*hs, 0.036*hs, 0.014*hs], 8)
+# 关节球：把断开的胶囊接起来（肩/肘/腕/膝/踝/髋），否则四肢像浮在空中
+for s2 in ("L", "R"):
+    for jn, r in ((f"arm{s2}", 0.105), (f"hand{s2}", 0.055),
+                  (f"thigh{s2}", 0.125), (f"foot{s2}", 0.050)):
+        if jn in B:
+            jp = J(jn)
+            grp = "suit" if jn.startswith(("arm", "fore")) else "skin"
+            part(grp, jn, push_ball, jp, r, r, r)
+if "hip" in B:
+    hip = J("hip")
+    part("hair", "hip", push_ball, (hip[0]-0.40, 0.20, hip[2]+0.06), 0.135, 0.130, 0.135)
+    for k2 in range(5):
+        th2 = 2.0*math.pi*k2/5.0
+        part("hair", "hip", push_ball,
+             (hip[0]-0.40 + math.cos(th2)*0.10, 0.20 + math.sin(th2)*0.10, hip[2]+0.06),
+             0.070, 0.070, 0.070)
+
+OBJS = []
+for group, items in PARTS.items():
+    verts, faces, vg = [], [], []
+    for bone, fn, args, kw in items:
+        idx = fn(verts, faces, *args, **kw)
+        vg.append((bone, list(range(idx, len(verts)))))
+    me = bpy.data.meshes.new(group + "_mesh")
+    me.from_pydata(verts, [], faces); me.update()
+    ob = bpy.data.objects.new(group, me)
+    scene.collection.objects.link(ob)
+    ob.data.materials.append(mat(group))
+    for bone, idxs in vg:
+        g = ob.vertex_groups.new(name=bone)
+        g.add(idxs, 1.0, "REPLACE")
+    bpy.context.view_layer.objects.active = ob
+    ob.select_set(True)
+    bpy.ops.object.mode_set(mode="EDIT")
+    bpy.ops.mesh.select_all(action="SELECT")
+    bpy.ops.object.vertex_group_smooth(group_select_mode="ALL", factor=0.55, repeat=3)
+    bpy.ops.object.mode_set(mode="OBJECT")
+    bpy.ops.object.shade_smooth()
+    md = ob.modifiers.new("Armature", "ARMATURE"); md.object = arm_obj
+    sub = ob.modifiers.new("Subdivision", "SUBSURF")
+    sub.levels = 1; sub.render_levels = 2
+    ob.parent = arm_obj
+    ob.select_set(False)
+    OBJS.append(ob)
+
+# ───────────────────────── 灯光（影棚三点光 + 地面接影） ─────────────────────────
+def light(kind, loc, energy, size, rot, color=(1.0, 1.0, 1.0)):
+    ld = bpy.data.lights.new("L_" + kind, type=kind)
+    ld.energy = energy
+    if kind == "AREA":
+        ld.size = size
+    ld.color = color
+    lo = bpy.data.objects.new("L_" + kind, ld)
+    lo.location = loc
+    lo.rotation_euler = rot
+    scene.collection.objects.link(lo)
+    return lo
+
+sc = HEIGHT / 5.2                                        # 相对尺度
+light("AREA", (1.6*sc, -2.4*sc, 1.5*sc), 150*sc*sc, 2.2*sc,
+      (math.radians(58), 0, math.radians(28)), (1.0, 0.97, 0.93))     # 主光（暖）
+light("AREA", (-2.2*sc, -1.6*sc, 0.7*sc), 48*sc*sc, 3.0*sc,
+      (math.radians(78), 0, math.radians(-42)), (0.92, 0.95, 1.0))    # 补光（冷）
+light("AREA", (0.4*sc, 2.6*sc, 1.9*sc), 160*sc*sc, 1.8*sc,
+      (math.radians(118), 0, math.radians(8)), (1.0, 0.99, 1.0))      # 轮廓光
+# 地面：让影子落下来，人才"站得住"
+bpy.ops.mesh.primitive_plane_add(size=24*sc, location=(xmid, 0.0, zmin - 0.03))
+floor = bpy.context.active_object
+fm = mat("floor")
+floor.data.materials.append(fm)
+floor.name = "floor"
+
+# ───────────────────────── 动作 K 帧（世界 Y 旋转 → 父骨空间四元数） ─────────────────────────
+bpy.context.view_layer.objects.active = arm_obj
+bpy.ops.object.mode_set(mode="POSE")
+for pb in arm_obj.pose.bones:
+    pb.rotation_mode = "QUATERNION"
+frames = DATA["frames"]
+for i, rots in enumerate(frames):
+    fr = i + 1
+    for name, delta in rots.items():
+        pb = arm_obj.pose.bones.get(name)
+        if not pb or abs(delta) < 1e-9:
+            continue
+        bone = arm_obj.data.bones[name]
+        rest = bone.matrix_local.to_3x3()
+        M = rest if not bone.parent else (bone.parent.matrix_local.to_3x3().inverted() @ rest)
+        R = Quaternion((0.0, 1.0, 0.0), math.radians(-float(delta))).to_matrix()
+        pb.rotation_quaternion = (M.inverted() @ R @ M).to_quaternion()
+        pb.keyframe_insert(data_path="rotation_quaternion", frame=fr)
+if arm_obj.animation_data and arm_obj.animation_data.action:
+    for fc in arm_obj.animation_data.action.fcurves:
+        for kp in fc.keyframe_points:
+            kp.interpolation = "LINEAR"
+bpy.ops.object.mode_set(mode="OBJECT")
+scene.frame_start, scene.frame_end = 1, len(frames)
+
+# ───────────────────────── 相机（透视 3/4 + 景深） ─────────────────────────
+cam_data = bpy.data.cameras.new("cam")
+cam_data.lens = 62.0
+cam_data.sensor_fit = "VERTICAL"
+cam_data.sensor_height = 24.0
+cam_data.dof.use_dof = True
+cam_data.dof.focus_object = arm_obj
+cam_data.dof.aperture_fstop = 2.6
+cam = bpy.data.objects.new("cam", cam_data)
+scene.collection.objects.link(cam); scene.camera = cam
+AZ, EL = math.radians(20.0), math.radians(5.0)
+DIST = HEIGHT * 1.30 * cam_data.lens / cam_data.sensor_height
+def place_cam(az, el, dist):
+    cam.location = (xmid + math.sin(az)*dist*math.cos(el),
+                    -math.cos(az)*dist*math.cos(el),
+                    zc + math.sin(el)*dist)
+    cam.rotation_euler = (math.radians(90) - el, 0.0, az)
+
+# ───────────────────────── 输出 ─────────────────────────
+if MODE == "preview":
+    nf = len(frames); mid = max(1, nf // 2)
+    scene.frame_set(mid)
+    for i in range(ANGLES):
+        place_cam(2.0*math.pi*i/ANGLES, EL, DIST)
+        scene.render.filepath = r"__OUT_DIR__" + "/" + DATA["clip"] + "_a%02d.png" % i
+        bpy.ops.render.render(write_still=True)
+    for i in range(STRIPS):
+        f = 1 + int(round(i * (nf - 1) / max(1, STRIPS - 1)))
+        scene.frame_set(f)
+        place_cam(AZ, EL, DIST)
+        scene.render.filepath = r"__OUT_DIR__" + "/" + DATA["clip"] + "_f%02d.png" % i
+        bpy.ops.render.render(write_still=True)
+    print("V9_BLENDER_OK", "preview", DATA["clip"])
+else:
+    scene.frame_set(1 + len(frames) // 3)
+    place_cam(AZ, EL, DIST)
+    scene.render.filepath = OUT_PNG
+    bpy.ops.render.render(write_still=True)
+    bpy.ops.export_scene.gltf(filepath=OUT_GLB, export_format="GLB",
+                              export_animations=True, export_frame_range=True)
+    print("V9_BLENDER_OK", OUT_PNG, OUT_GLB)

@@ -1,4 +1,5 @@
 # tests/integration/test_s3_immutability.py
+from core.swallow import swallow as _swallow
 import hashlib, json, os, uuid
 import pytest
 from tests.integration.conftest import TEST_PREFIX, guard_key, need, safe_error
@@ -144,8 +145,8 @@ def test_same_key_same_content_never_corrupts(provider):
     provider.put_create_only_sync(key, A)
     try:
         provider.put_create_only_sync(key, A)
-    except PreconditionFailed:
-        pass
+    except PreconditionFailed as e:
+        _swallow(__file__, e)
     assert provider.get_sync(key) == A
     assert hashlib.sha256(provider.get_sync(key)).hexdigest() == hashlib.sha256(A).hexdigest()
 

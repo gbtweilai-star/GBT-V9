@@ -33,8 +33,15 @@ class Coder:
 
     def _run_tests(self):
         if not self.test_cmd: return {"ok": None, "out": "未配置 TEST_CMD"}
-        r = subprocess.run(self.test_cmd, shell=True, cwd=self.dir,
-                           capture_output=True, text=True, timeout=600)
+        # 不走 shell（真机排查发现原先 shell=True，等于给测试命令开了注入面）。
+        # 需要管道/重定向时，把命令写成列表形式显式给出。
+        import shlex
+        cmd = list(self.test_cmd) if isinstance(self.test_cmd, (list, tuple)) \
+            else shlex.split(str(self.test_cmd))
+        if not cmd:
+            return {"ok": None, "out": "TEST_CMD 为空"}
+        r = subprocess.run(cmd, shell=False, cwd=self.dir,
+                           capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=600)
         return {"ok": r.returncode == 0,
                 "out": (r.stdout + r.stderr)[-6000:]}
 

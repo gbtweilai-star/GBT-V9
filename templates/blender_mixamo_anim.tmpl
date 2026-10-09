@@ -1,0 +1,327 @@
+# templates/blender_mixamo_anim.tmpl —— 把绑好骨的 FBX 驱动起来，渲染成 WebM（数字人页面用）
+# 占位符：__FBX__ / __OUT_DIR__ / __CLIP__ / __SECONDS__ / __FPS__ / __W__ / __H__ / __WAVE__
+# 纪律：argv 字面量、只在 out_dir 落盘、不出网。
+import json
+import math
+import os
+
+import bpy
+from mathutils import Vector
+
+FBX = r"__FBX__"
+OUT_DIR = r"__OUT_DIR__"
+CLIP = r"__CLIP__"
+SECONDS = __SECONDS__
+STILL = __STILL__
+ALPHA = __ALPHA__          # 1 = 透明背景（只留数字人，不渲地面/背景）          # 1 = 只渲保持姿态那一帧（快速看姿势对不对）
+FPS = __FPS__
+W, H = __W__, __H__
+
+os.makedirs(OUT_DIR, exist_ok=True)
+bpy.ops.wm.read_factory_settings(use_empty=True)
+sc = bpy.context.scene
+
+bpy.ops.import_scene.fbx(filepath=FBX)
+
+arms = [o for o in bpy.data.objects if o.type == "ARMATURE"]
+meshes = [o for o in bpy.data.objects if o.type == "MESH"]
+assert arms, "no armature in fbx"
+arm = arms[0]
+
+# ★ FBX 里自带动作曲线（旋转多为四元数）会把我们写的欧拉键压过去（踩过：姿势全都一动不动）
+#   所以先把导入的动画数据清干净，再自己 K 帧。
+if arm.animation_data:
+    arm.animation_data_clear()
+for _a in list(bpy.data.actions):
+    bpy.data.actions.remove(_a)
+for _pb in arm.pose.bones:
+    _pb.rotation_mode = "XYZ"
+
+bones = [b.name for b in arm.pose.bones]
+print("BONES", len(bones), json.dumps(bones))
+
+# 统一按包围盒摆相机（FBX 可能是厘米制，先量再摆）
+mn = Vector((1e9, 1e9, 1e9))
+mx = Vector((-1e9, -1e9, -1e9))
+for o in meshes:
+    for c in o.bound_box:
+        w = o.matrix_world @ Vector(c)
+        for i in range(3):
+            mn[i] = min(mn[i], w[i])
+            mx[i] = max(mx[i], w[i])
+center = (mn + mx) / 2.0
+height = max((mx - mn).z, 1e-6)
+print("BBOX", [round(v, 3) for v in mn], [round(v, 3) for v in mx])
+
+world = bpy.data.worlds.new("v9w")
+sc.world = world
+world.use_nodes = True
+wnt = world.node_tree
+for n in list(wnt.nodes):
+    wnt.nodes.remove(n)
+wout = wnt.nodes.new("ShaderNodeOutputWorld")
+wbg = wnt.nodes.new("ShaderNodeBackground")
+wbg.inputs[1].default_value = 0.22
+wramp = wnt.nodes.new("ShaderNodeValToRGB")
+wramp.color_ramp.elements[0].position = 0.35
+wramp.color_ramp.elements[0].color = (0.30, 0.31, 0.35, 1)      # 下半（近地面）稍暗
+wramp.color_ramp.elements[1].position = 0.80
+wramp.color_ramp.elements[1].color = (0.62, 0.63, 0.67, 1)      # 上半更亮的浅灰（照原图背景）
+wsep = wnt.nodes.new("ShaderNodeSeparateXYZ")
+wtex = wnt.nodes.new("ShaderNodeTexCoord")
+wnt.links.new(wtex.outputs["Generated"], wsep.inputs[0])
+wnt.links.new(wsep.outputs["Z"], wramp.inputs[0])
+wnt.links.new(wramp.outputs["Color"], wbg.inputs[0])
+wnt.links.new(wbg.outputs[0], wout.inputs[0])
+
+
+def area(name, loc, energy, sz, rot, color=(1.0, 0.99, 0.97)):
+    d = bpy.data.lights.new(name, type="AREA")
+    d.energy, d.size = energy, sz
+    d.color = color
+    o = bpy.data.objects.new(name, d)
+    o.location, o.rotation_euler = loc, rot
+    sc.collection.objects.link(o)
+
+
+k = height
+# 冷调主光更硬（小面积高能量）→ 皮肤与布料有明暗层次，不像原来那样发白
+area("key", (center.x - 0.9 * k, center.y - 1.3 * k, center.z + 0.75 * k), 105 * k * k, 0.7 * k,
+     (math.radians(56), 0, math.radians(-34)), (1.0, 0.99, 0.96))
+area("fill", (center.x + 1.1 * k, center.y - 0.9 * k, center.z + 0.35 * k), 26 * k * k, 1.8 * k,
+     (math.radians(74), 0, math.radians(52)), (0.93, 0.95, 1.0))
+area("rim", (center.x + 0.2 * k, center.y + 1.4 * k, center.z + 0.9 * k), 70 * k * k, 0.9 * k,
+     (math.radians(120), 0, math.radians(190)), (0.90, 0.94, 1.0))
+area("top", (center.x, center.y - 0.1 * k, center.z + 1.6 * k), 16 * k * k, 1.4 * k,
+     (0, 0, 0), (0.96, 0.97, 1.0))
+
+# 浅灰地面：接住脚下一圈软影（原图就是这样）；透明模式不要地面，否则会带一条底板
+if not ALPHA:
+    bpy.ops.mesh.primitive_plane_add(size=8 * k, location=(center.x, center.y, mn.z - 0.002))
+floor = (bpy.context.object if not ALPHA else None)
+fmat = bpy.data.materials.new("v9floor")
+fmat.use_nodes = True
+fb = fmat.node_tree.nodes["Principled BSDF"]
+fb.inputs["Base Color"].default_value = (0.50, 0.51, 0.55, 1)
+fb.inputs["Roughness"].default_value = 0.82
+if floor is not None:
+    floor.data.materials.append(fmat)
+
+cd = bpy.data.cameras.new("cam")
+cd.lens = 68.0
+cam = bpy.data.objects.new("cam", cd)
+sc.collection.objects.link(cam)
+sc.camera = cam
+dist = height * 2.0
+cam.location = Vector((center.x, center.y - dist, center.z + height * 0.04))
+look = center - cam.location
+cam.rotation_euler = look.to_track_quat("-Z", "Y").to_euler()
+
+sc.render.engine = "BLENDER_EEVEE_NEXT"
+sc.render.resolution_x, sc.render.resolution_y = W, H
+sc.view_settings.view_transform = "AgX"
+sc.view_settings.exposure = -0.85
+sc.view_settings.look = "AgX - Medium High Contrast"     # 原图对比度更高，别用默认的平调
+try:
+    sc.eevee.taa_render_samples = 64
+    sc.eevee.use_raytracing = True
+except Exception as e:                                            # noqa: BLE001
+    print("eevee:", e)
+sc.render.fps = FPS
+frames = int(SECONDS * FPS)
+sc.frame_start, sc.frame_end = 1, frames
+
+# ---------- 动作：按骨名（Mixamo 标准名）驱动，正弦叠加，首尾同相保证循环 ----------
+P = arm.pose.bones
+
+
+MISSED = set()
+
+
+def rot(name, x=0.0, y=0.0, z=0.0):
+    """按骨名设欧拉角。找不到骨必须吼出来——静默跳过会让"姿势没动"查半天（踩过）。"""
+    b = P.get(name)
+    if b is None:
+        MISSED.add(name)
+        return
+    b.rotation_mode = "XYZ"
+    b.rotation_euler = (math.radians(x), math.radians(y), math.radians(z))
+
+
+def env_hold(t, a=0.18, b=0.82):
+    """起势—保持—收回：0→1（a 段缓入）→保持到 b→缓出回 0，首尾归零循环无缝。
+
+    为什么不用 sin：正弦只在一瞬间到达姿势，大半段时间站回原位（踩过）。
+    """
+    if t < a:
+        return 0.5 - 0.5 * math.cos(math.pi * (t / a))
+    if t <= b:
+        return 1.0
+    return 0.5 - 0.5 * math.cos(math.pi * (1.0 - (t - b) / (1.0 - b)))
+
+
+BEST = {"f": 1, "mag": -1.0}
+
+
+def key_all(f):
+    """K 帧 + 记住"动作幅度最大"的那一帧（探针图取它，别取到包络归零的瞬间——踩过）。"""
+    mag = 0.0
+    for b in P:
+        b.keyframe_insert("rotation_euler", frame=f)
+        e = b.rotation_euler
+        mag += abs(e.x) + abs(e.y) + abs(e.z)
+    if mag > BEST["mag"]:
+        BEST["mag"] = mag
+        BEST["f"] = f
+
+
+for i in range(frames):
+    f = i + 1
+    t = i / float(frames)                 # 0..1，正弦周期取整保证无缝循环
+    s = math.sin(2 * math.pi * t)
+    s2 = math.sin(2 * math.pi * t * 2)
+    breath = 1.6 * s                      # 呼吸
+    sway = 2.2 * s                        # 重心摆
+    if CLIP == "idle":
+        rot("mixamorig:Hips", x=1.0 * s, z=sway * 0.45)
+        rot("mixamorig:Spine", x=-1.2 * s)
+        rot("mixamorig:Spine1", x=-1.0 * s)
+        rot("mixamorig:Spine2", x=-breath)
+        rot("mixamorig:Neck", x=0.8 * s2 * 0.5)
+        rot("mixamorig:Head", x=1.0 * s, z=-2.0 * s)
+        rot("mixamorig:LeftArm", x=2.0 * s, z=-2.5 * s)
+        rot("mixamorig:RightArm", x=2.0 * s, z=2.5 * s)
+        rot("mixamorig:LeftForeArm", x=3.0 * s2 * 0.6)
+        rot("mixamorig:RightForeArm", x=3.0 * s2 * 0.6)
+    elif CLIP == "wave":
+        up = min(1.0, max(0.0, math.sin(math.pi * min(t * 2.2, 1.0)) * 1.6))
+        rot("mixamorig:RightArm", x=-110.0 * up, z=-18.0 * up)
+        rot("mixamorig:RightForeArm", x=-10.0 * up, z=-40.0 * up + 18.0 * up * math.sin(2 * math.pi * t * 3))
+        rot("mixamorig:RightHand", z=10.0 * up * math.sin(2 * math.pi * t * 3))
+        rot("mixamorig:Head", z=-6.0 * up, x=2.0 * up)
+        rot("mixamorig:Spine2", z=-3.0 * up)
+        rot("mixamorig:Hips", z=1.5 * up)
+    elif CLIP == "bow":
+        b = math.sin(math.pi * min(t * 2.2, 1.0))
+        rot("mixamorig:Hips", x=14.0 * b)
+        rot("mixamorig:Spine", x=12.0 * b)
+        rot("mixamorig:Spine1", x=10.0 * b)
+        rot("mixamorig:Spine2", x=8.0 * b)
+        rot("mixamorig:Neck", x=6.0 * b)
+        rot("mixamorig:LeftArm", x=18.0 * b, z=-6.0 * b)
+        rot("mixamorig:RightArm", x=18.0 * b, z=6.0 * b)
+        rot("mixamorig:LeftUpLeg", x=-4.0 * b)
+        rot("mixamorig:RightUpLeg", x=-4.0 * b)
+    elif CLIP == "salute":                 # 敬礼：右臂抬起、肘外撑、手到眉侧
+        env = env_hold(t)
+        rot("mixamorig:RightArm", x=-122.0 * env, z=26.0 * env)
+        rot("mixamorig:RightForeArm", x=-38.0 * env, z=8.0 * env)
+        rot("mixamorig:RightHand", x=-10.0 * env)
+        rot("mixamorig:LeftArm", x=4.0 * env, z=3.0 * env)
+        rot("mixamorig:Spine2", x=2.0 * env)
+        rot("mixamorig:Head", x=4.0 * env)
+        rot("mixamorig:Hips", z=1.0 * env)
+    elif CLIP == "armsx":                  # 抱臂：双手胸前交叠、瞪人（泼辣发火的招牌姿势）
+        env = env_hold(t)
+        rot("mixamorig:RightArm", x=-10.0 * env, z=64.0 * env)
+        rot("mixamorig:RightForeArm", x=-96.0 * env, z=-34.0 * env)
+        rot("mixamorig:LeftArm", x=-10.0 * env, z=-64.0 * env)
+        rot("mixamorig:LeftForeArm", x=-96.0 * env, z=34.0 * env)
+        rot("mixamorig:Spine2", x=-3.0 * env)
+        rot("mixamorig:Hips", z=2.5 * env * math.sin(2 * math.pi * t * 2))
+        rot("mixamorig:Head", x=-2.0 * env, z=-5.0 * env)
+    elif CLIP == "think":                  # 托腮：右手到下巴、头微偏
+        env = env_hold(t)
+        rot("mixamorig:RightArm", x=-74.0 * env, z=-38.0 * env)
+        rot("mixamorig:RightForeArm", x=-118.0 * env, z=-16.0 * env)
+        rot("mixamorig:RightHand", x=-10.0 * env, z=8.0 * env)
+        rot("mixamorig:Head", x=7.0 * env, z=9.0 * env)
+        rot("mixamorig:Neck", x=4.0 * env, z=4.0 * env)
+        rot("mixamorig:Spine2", z=3.0 * env)
+        rot("mixamorig:LeftArm", x=6.0 * env, z=4.0 * env)
+    elif CLIP == "nod":                    # 点头：连点两下
+        n = math.sin(2 * math.pi * t * 2)
+        rot("mixamorig:Head", x=12.0 * n, z=1.0 * n)
+        rot("mixamorig:Neck", x=5.0 * n)
+        rot("mixamorig:Spine2", x=1.5 * n)
+        rot("mixamorig:Hips", z=0.8 * n)
+    elif CLIP == "shake":                  # 摇头：左右两下
+        n = math.sin(2 * math.pi * t * 2)
+        rot("mixamorig:Head", z=14.0 * n, x=1.5 * abs(n))
+        rot("mixamorig:Neck", z=6.0 * n)
+        rot("mixamorig:Spine2", z=3.0 * n)
+        rot("mixamorig:LeftArm", z=-3.0 * n)
+        rot("mixamorig:RightArm", z=3.0 * n)
+    elif CLIP == "shy":                    # 害羞讨好：双手身前交叠、身体微侧
+        env = env_hold(t)
+        rot("mixamorig:RightArm", x=-34.0 * env, z=26.0 * env)
+        rot("mixamorig:RightForeArm", x=-46.0 * env, z=-30.0 * env)
+        rot("mixamorig:LeftArm", x=-34.0 * env, z=-26.0 * env)
+        rot("mixamorig:LeftForeArm", x=-46.0 * env, z=30.0 * env)
+        rot("mixamorig:Head", x=10.0 * env, z=-6.0 * env)
+        rot("mixamorig:Neck", x=6.0 * env)
+        rot("mixamorig:Spine2", x=4.0 * env, z=-3.0 * env)
+        rot("mixamorig:Hips", z=4.0 * env)
+        rot("mixamorig:LeftUpLeg", x=3.0 * env)
+        rot("mixamorig:RightUpLeg", x=-3.0 * env)
+    elif CLIP == "cheer":                  # 欢呼：双臂上举再落回
+        up = env_hold(t)
+        rot("mixamorig:RightArm", x=-150.0 * up, z=12.0 * up)
+        rot("mixamorig:LeftArm", x=-150.0 * up, z=-12.0 * up)
+        rot("mixamorig:RightForeArm", x=-20.0 * up)
+        rot("mixamorig:LeftForeArm", x=-20.0 * up)
+        rot("mixamorig:Spine", x=-6.0 * up)
+        rot("mixamorig:Spine2", x=-4.0 * up)
+        rot("mixamorig:Head", x=-8.0 * up)
+        rot("mixamorig:Hips", x=-3.0 * up)
+    else:                                  # turn：左右看
+        rot("mixamorig:Head", z=16.0 * s, x=2.0 * s2)
+        rot("mixamorig:Neck", z=7.0 * s)
+        rot("mixamorig:Spine2", z=5.0 * s)
+        rot("mixamorig:Spine1", z=3.0 * s)
+        rot("mixamorig:Hips", z=-1.5 * s)
+        rot("mixamorig:LeftArm", z=-2.0 * s)
+        rot("mixamorig:RightArm", z=2.0 * s)
+    key_all(f)
+
+# 输出 WebM/VP9（开源 Chromium 能放）
+if ALPHA:
+    sc.render.film_transparent = True
+    sc.render.image_settings.file_format = "PNG"
+    sc.render.image_settings.color_mode = "RGBA"
+    seq_dir = os.path.join(OUT_DIR, "frames_" + CLIP)
+    os.makedirs(seq_dir, exist_ok=True)
+    sc.render.filepath = os.path.join(seq_dir, "f_")
+    if STILL:
+        sc.frame_set(BEST["f"])
+        sc.render.filepath = os.path.join(seq_dir, "still_")
+        bpy.ops.render.render(write_still=True)
+    else:
+        bpy.ops.render.render(animation=True)
+    print("ROT_MISS", json.dumps(sorted(MISSED)))
+    print("V9_MIXAMO_OK", seq_dir)
+    raise SystemExit(0)
+
+sc.render.image_settings.file_format = "FFMPEG"
+sc.render.ffmpeg.format = "WEBM"
+sc.render.ffmpeg.codec = "WEBM"
+sc.render.ffmpeg.constant_rate_factor = "HIGH"
+out = os.path.join(OUT_DIR, CLIP + ".webm")
+sc.render.filepath = out
+if STILL:
+    sc.render.image_settings.file_format = "PNG"
+    sc.frame_set(BEST["f"])                     # 取幅度最大的那帧，姿势才看得出来
+    sc.render.filepath = os.path.join(OUT_DIR, CLIP + "_pose.png")
+    bpy.ops.render.render(write_still=True)
+    for _o in meshes:
+        print("MESH_INFO", _o.name,
+              "parent=", _o.parent.name if _o.parent else None,
+              "mods=", [m.type for m in _o.modifiers],
+              "vgroups=", len(_o.vertex_groups),
+              "dims=", [round(v, 3) for v in _o.dimensions])
+    print("ROT_MISS", json.dumps(sorted(MISSED)))
+    print("V9_MIXAMO_OK", sc.render.filepath)
+else:
+    bpy.ops.render.render(animation=True)
+    print("ROT_MISS", json.dumps(sorted(MISSED)))
+    print("V9_MIXAMO_OK", out)

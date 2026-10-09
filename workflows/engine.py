@@ -5,6 +5,7 @@
 #   - 无环校验(拓扑排序); 输入引用必须指向上游节点
 #   - 节点类型白名单(skill|branch|map|gate); 禁止任意代码节点
 #   - 密钥只能用 $secret:NAME 引用; 含明文凭据的 flow 直接拒绝
+from core.swallow import swallow as _swallow
 import json, re, time, uuid
 from collections import deque
 from senses.sqldialect import txn
@@ -62,6 +63,14 @@ class WorkflowEngine:
                             errs.append(f"{n['id']}.{var} 引用不存在的节点 {src}")
                         elif pos.get(src, 9e9) >= pos.get(n["id"], -1):
                             errs.append(f"{n['id']}.{var} 引用了非上游节点 {src}")
+                # pipe：把某个上游节点的整份输出当本节点请求体 —— 能力串联的正门
+                # （没有它，调用方就得替每个能力猜入参键名；这些离线能力多数未声明 schema）
+                p = n.get("pipe")
+                if p:
+                    if p not in nodes:
+                        errs.append(f"{n['id']}.pipe 引用不存在的节点 {p}")
+                    elif pos.get(p, 9e9) >= pos.get(n["id"], -1):
+                        errs.append(f"{n['id']}.pipe 引用了非上游节点 {p}")
         return errs
 
     def _topo(self, nodes, edges):
@@ -138,15 +147,24 @@ class WorkflowEngine:
                 # skill
                 req = {k: self._resolve(v, outputs, inputs)
                        for k, v in (n.get("inputs") or {}).items()}
+                pipe = n.get("pipe")             # 上一步输出 → 本步请求体（显式 inputs 覆盖它）
+                if pipe:
+                    prev = (outputs.get(pipe) or {}).get("output")
+                    if isinstance(prev, dict):
+                        req = {**prev, **req}
+                    elif prev is not None:
+                        req = {"input": prev, **req}
+                _t0 = time.time()
                 res = self._call_skill(n["skill"], req, ctx)
                 outputs[nid] = {"ok": bool(res.get("ok")),
                                 "output": res.get("output")}
                 results.append({"node": nid, "ok": res.get("ok"),
-                                "error": res.get("error", "")})
+                                "error": res.get("error", ""),
+                                "ms": int((time.time() - _t0) * 1000)})   # 编辑器回显耗时
             except Exception as e:
                 outputs[nid] = {"ok": False, "output": None}
                 results.append({"node": nid, "ok": False,
-                                "error": f"{type(e).__name__}: {e}"})
+                                "error": f"{type(e).__name__}: {e}", "ms": 0})
         ok = all(r.get("ok") for r in results) if results else True
         self._audit(trace_id, flow.get("id"), ok, results)
         return {"ok": ok, "trace_id": trace_id, "steps": results,
@@ -184,5 +202,5 @@ class WorkflowEngine:
                 cur.execute(f"INSERT INTO workflow_runs VALUES({','.join([ph]*5)})",
                             (trace_id, flow_id, time.time(), 1 if ok else 0,
                              json.dumps(results, ensure_ascii=False)[:4000]))
-        except Exception:
-            pass
+        except Exception as e:
+            _swallow(__file__, e)

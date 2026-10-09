@@ -5,6 +5,7 @@
 #   采集线程只写 outbox（与 gap 行同事务），绝不等 DB 之外的 IO 或语音；
 #   worker 线程排空 outbox → observe_incident（幂等）→ 仅 ACTIVE 边沿播报；
 #   backfill() 补偿崩溃窗口：扫 gap 表里还没进 outbox 的行。
+from core.swallow import swallow as _swallow
 import os, time, json, sqlite3, threading
 from dataclasses import dataclass
 from panel.pipelines import source_status, _cols, _pick   # 复用防御式取数
@@ -197,8 +198,8 @@ class GapAlertBridge:
                 self.voice.say_alert({"level": "info", "label": "吞噬能已恢复",
                                       "value": int(res.episode_total), "unit": "帧",
                                       "episode": res.episode_id})
-            except Exception:
-                pass
+            except Exception as e:
+                _swallow(__file__, e)
         return res
 
     def status(self):

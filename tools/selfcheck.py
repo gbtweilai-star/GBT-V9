@@ -8,6 +8,11 @@ import py_compile
 import sys
 from pathlib import Path
 
+# ★中文 Windows 控制台默认 GBK：本文件要打 ✅/❌，不打这行会在最后一步 UnicodeEncodeError
+#   崩掉（看起来像"自检失败"，其实只是编码）——踩过，这里钉死。
+if hasattr(sys.stdout, "reconfigure"):
+    sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
 

@@ -10,6 +10,7 @@ from dataclasses import dataclass, field, asdict
 from typing import Protocol, runtime_checkable, Any
 from senses.sqldialect import txn
 from audit.ddl import run_script
+from core.swallow import swallow as _swallow
 
 
 @dataclass
@@ -140,13 +141,15 @@ class SkillRegistry:
                     json.dumps(r.output, ensure_ascii=False, default=str)[:4000],
                     json.dumps(r.artifacts, ensure_ascii=False)[:2000],
                     json.dumps(r.warnings, ensure_ascii=False)[:1000], r.error))
-        except Exception:
-            pass
+        except Exception as e:
+            _swallow(__file__, e)
+
         if self.panel:
             try:
                 self.panel.push_skill(s.name, r.ok, ms)
-            except Exception:
-                pass
+            except Exception as e:
+                _swallow(__file__, e)
+
 
     def status(self):
         return {n: {"version": s.version,

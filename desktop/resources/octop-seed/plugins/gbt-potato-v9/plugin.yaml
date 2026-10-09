@@ -1,0 +1,8 @@
+id: gbt-potato-v9
+version: 0.13.8
+name: GBT小土豆V9
+description: GBT小土豆V9 能力内核：V9⇄Octop 深度融合 + 八条闭环 100% 跑通 + 云插件主管道 + 本地 0 显存双通道 + 四条全自动流水线 + 三套工具包 + 蓝牙 AI 操控 + 数字人 32 动作 + 免费离线听写 + 工作流独立页（调研前置闸门 · 逐段验收）+ **原生大脑（统一记忆 · 生命起源存档 · 元认知 · 热度褪色 · 提醒 · 隐私回收站）** + 全站按键统一 + 固化回滚
+icon: icon.svg
+group: tools
+kind: tool
+entry: main.py

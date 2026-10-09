@@ -8,6 +8,7 @@
 #   - 每段单调 seq + 唯一ID，DB 唯一键防重复
 #   - 关键词 NFKC+大小写折叠+标点归一后短语匹配，冷却去重，命中发主脑
 #   - 默认只留转写文本，临时音频处理完即删；提供停止开关
+from core.swallow import swallow as _swallow
 import os, re, time, uuid, queue, threading, unicodedata, wave, tempfile
 from pathlib import Path
 from dataclasses import dataclass, field
@@ -133,7 +134,8 @@ class MicCapture:
                 with txn(self.led) as cur:
                     cur.execute("INSERT INTO mic_events(kind,detail) VALUES(?,?)",
                                 (kind, detail[:300]))
-        except Exception: pass
+        except Exception as e:
+            _swallow(__file__, e)
 
     # ── 音频回调：只写环形缓冲，绝不做 IO/网络 ──
     def _callback(self, indata, frames, time_info, status):
@@ -225,13 +227,38 @@ class MicCapture:
                 w.setnchannels(1); w.setsampwidth(2); w.setframerate(SAMPLE_RATE)
                 w.writeframes(seg.pcm)
             data = tmp.read_bytes()
-            from senses.voice import _post
-            r = _post("/audio/transcriptions", {"model": "whisper-1", "language": "auto"},
-                      files={"file": (f"{seg.id}.wav", data)},
-                      timeout=max(self.voice.timeout, 120))
-            text = (r.get("text") or "").strip()
-            status, err = "done", None
-            self.stats["transcribed"] += 1
+            text, used, why = "", "", ""
+            try:
+                from senses.voice import _post
+                r = _post("/audio/transcriptions", {"model": "whisper-1", "language": "auto"},
+                          files={"file": (f"{seg.id}.wav", data)},
+                          timeout=max(self.voice.timeout, 120))
+                text = (r.get("text") or "").strip()
+                used = "voicestudio" if text else ""
+            except Exception as exc:                 # noqa: BLE001
+                why = f"{type(exc).__name__}: {exc}"
+            if not text:
+                # ★2026-10-08：3900 不可达就**回落本机 SAPI 离线识别** —— 常开耳朵这才算通
+                #   （原先只打 3900 /audio/transcriptions，而它压根没这个路由 ⇒ 永远空文本）
+                try:
+                    from senses import voice_sapi as _vs
+                    loc = _vs.recognize(tmp)
+                    got_text = (loc.get("text") or "").strip()
+                    if loc.get("ok") and got_text:
+                        text, used = got_text, "sapi-local"
+                    else:
+                        why = (why + " | " if why else "") + \
+                              f"本机SAPI: {loc.get('reason') or '没听出文本'}"
+                except Exception as exc:             # noqa: BLE001
+                    why = (why + " | " if why else "") + f"{type(exc).__name__}: {exc}"
+            # 纪律：**所有通道都没给出文本 = failed**，不拿空文本冒充成功
+            #       （tests/test_mic.py:65 守的就是这条）
+            if text:
+                status, err = "done", None
+                self.stats["transcribed"] += 1
+            else:
+                status, err = "failed", (why or "所有听写通道都没给出文本")
+                self.stats["failed"] += 1
         except Exception as e:
             text, status, err = "", "failed", str(e)
             self.stats["failed"] += 1
@@ -282,16 +309,19 @@ class MicCapture:
             try:
                 self.brain.ask(self.tid, f"mic:seq{seg.seq}",
                     f"语音命中关键词 {[h['keyword'] for h in fresh]} 原文: {text[:200]}")
-            except Exception: pass
+            except Exception as e:
+                _swallow(__file__, e)
         # 可选回调（面板通知等）
         if self.on_keyword:
             try: self.on_keyword(seg, text, fresh)
-            except Exception: pass
+            except Exception as e:
+                _swallow(__file__, e)
         # 严重级关键词额外语音回执
         if any(h["level"] == "critical" for h in fresh):
             try: self.voice.enqueue(f"检测到紧急语音关键词：{fresh[0]['keyword']}",
                                     event_id=f"mic:{seg.id}", priority=0)
-            except Exception: pass
+            except Exception as e:
+                _swallow(__file__, e)
 
     # ── 启停 ──
     def start(self):
@@ -313,7 +343,8 @@ class MicCapture:
     def stop(self):
         self._stop.set()
         try: self.stream.stop(); self.stream.close()
-        except Exception: pass
+        except Exception as e:
+            _swallow(__file__, e)
         self._note("stopped", f"stats={self.stats}")
 
     def status(self):

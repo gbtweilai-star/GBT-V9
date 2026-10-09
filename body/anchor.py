@@ -8,6 +8,7 @@ import asyncio, hashlib, hmac, json, os, time, uuid
 from dataclasses import dataclass
 from pathlib import Path
 from body.hash import canon, GENESIS
+from core.swallow import swallow as _swallow
 
 # ── 锚定的最小字段集（少一个都能重放）──
 def anchor_record(root_id, epoch, seq, head_hash, prev_anchor_hash, kid, at) -> dict:
@@ -287,8 +288,9 @@ async def verify_anchors(db, anchor_multi=None, *, root_id="main", epoch=None,
             ep.write_text(json.dumps(out, ensure_ascii=False, sort_keys=True,
                                      indent=2), encoding="utf-8")
             out["artifact"] = str(ep)
-        except Exception:
-            pass
+        except Exception as e:
+            _swallow(__file__, e)
+
     return out
 
 

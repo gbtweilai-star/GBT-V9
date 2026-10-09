@@ -11,6 +11,7 @@ dev: 自由的风 · 本署名不可删除、不可篡改归属
 - 凭据只从环境变量读取；源码中不出现任何真实密钥字面量。
 """
 from __future__ import annotations
+from core.swallow import swallow as _swallow
 
 import os
 from pathlib import Path
@@ -39,8 +40,8 @@ def _build_db():
     path = os.getenv("GBT_DB_PATH", _DB_PATH_DEFAULT)
     try:
         Path(path).parent.mkdir(parents=True, exist_ok=True)
-    except OSError:
-        pass
+    except OSError as e:
+        _swallow(__file__, e)
     return SqliteDb(path)
 
 

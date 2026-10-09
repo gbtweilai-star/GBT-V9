@@ -8,6 +8,7 @@
 # 后端一致性:
 #   - dialect 属性供共享模块（告警/扩容/缓存）做方言分支
 #   - 时间统一存 epoch 秒（REAL），与 PG 版保持同语义
+from core.swallow import swallow as _swallow
 import os, time, sqlite3, threading
 from contextlib import contextmanager
 from enum import Enum
@@ -71,7 +72,8 @@ class Ledger:
         except Exception:
             if depth == 0:
                 try: self.conn.execute("ROLLBACK")
-                except sqlite3.OperationalError: pass
+                except sqlite3.OperationalError as e:
+                    _swallow(__file__, e)
             raise
         finally:
             self._local.tx_depth = depth                   # 恢复外层深度
@@ -164,5 +166,6 @@ class Ledger:
         c = getattr(self._local, "conn", None)
         if c:
             try: c.close()
-            except Exception: pass
+            except Exception as e:
+                _swallow(__file__, e)
             self._local.conn = None

@@ -1,0 +1,117 @@
+# templates/blender_avatar_stills.tmpl —— 给数字人重渲"卡片三件套"：转台 8 帧 + 主图 + 脸部特写
+# 占位符：__FBX__ / __OUT__ / __LABEL__ / __W__ / __H__
+# 要点（都是踩过的）：
+#   · 背景透明（film_transparent）→ 卡片上只有她自己，不带灰底方块；
+#   · 相机必须"既转位置又转朝向"（只转朝向＝空转台）；
+#   · 脸部特写按头顶高度定位 + 开景深，否则脸是糊的；
+#   · 走 EEVEE Next（本机 AMD 上 Cycles HIP 会崩；要光追另说）。
+import json
+import math
+import os
+
+import bpy
+from mathutils import Vector
+
+FBX = r"__FBX__"
+OUT = r"__OUT__"
+LABEL = r"__LABEL__"
+W, H = __W__, __H__
+os.makedirs(OUT, exist_ok=True)
+
+bpy.ops.wm.read_factory_settings(use_empty=True)
+sc = bpy.context.scene
+bpy.ops.import_scene.fbx(filepath=FBX)
+
+arm = [o for o in bpy.data.objects if o.type == "ARMATURE"]
+meshes = [o for o in bpy.data.objects if o.type == "MESH"]
+assert arm and meshes, "FBX 里缺骨架或网格"
+if arm[0].animation_data:                      # 自带动作曲线会压住我们的姿态
+    arm[0].animation_data_clear()
+for a in list(bpy.data.actions):
+    bpy.data.actions.remove(a)
+
+mn = Vector((1e9, 1e9, 1e9)); mx = Vector((-1e9, -1e9, -1e9))
+for o in meshes:
+    for c in o.bound_box:
+        w = o.matrix_world @ Vector(c)
+        for i in range(3):
+            mn[i] = min(mn[i], w[i]); mx[i] = max(mx[i], w[i])
+center = (mn + mx) / 2.0
+k = max((mx - mn).z, 1e-6)
+print("BBOX", [round(v, 3) for v in mn], [round(v, 3) for v in mx])
+
+# 世界：只当光源（背景透明，不出现在画面上）
+world = bpy.data.worlds.new("v9w"); sc.world = world; world.use_nodes = True
+bgn = world.node_tree.nodes.get("Background")
+if bgn:
+    bgn.inputs[0].default_value = (0.42, 0.44, 0.50, 1)
+    bgn.inputs[1].default_value = 0.28
+
+
+def area(name, loc, energy, sz, rot, color=(1.0, 0.99, 0.97)):
+    d = bpy.data.lights.new(name, type="AREA"); d.energy, d.size, d.color = energy, sz, color
+    o = bpy.data.objects.new(name, d); o.location, o.rotation_euler = loc, rot
+    sc.collection.objects.link(o)
+
+
+area("key", (center.x - 0.9 * k, center.y - 1.3 * k, center.z + 0.75 * k), 105 * k * k, 0.7 * k,
+     (math.radians(56), 0, math.radians(-34)), (1.0, 0.99, 0.96))
+area("fill", (center.x + 1.1 * k, center.y - 0.9 * k, center.z + 0.35 * k), 26 * k * k, 1.8 * k,
+     (math.radians(74), 0, math.radians(52)), (0.93, 0.95, 1.0))
+area("rim", (center.x + 0.2 * k, center.y + 1.4 * k, center.z + 0.9 * k), 70 * k * k, 0.9 * k,
+     (math.radians(120), 0, math.radians(190)), (0.90, 0.94, 1.0))
+
+cd = bpy.data.cameras.new("cam"); cd.lens = 68.0
+cam = bpy.data.objects.new("cam", cd); sc.collection.objects.link(cam); sc.camera = cam
+
+sc.render.engine = "BLENDER_EEVEE_NEXT"
+sc.render.resolution_x, sc.render.resolution_y = W, H
+sc.render.film_transparent = True                    # ★ 透明背景：卡片上只有她
+sc.view_settings.view_transform = "AgX"
+sc.view_settings.look = "AgX - Medium High Contrast"
+sc.view_settings.exposure = -0.85
+sc.render.image_settings.file_format = "PNG"
+sc.render.image_settings.color_mode = "RGBA"
+try:
+    sc.eevee.taa_render_samples = 96
+    sc.eevee.use_raytracing = True
+except Exception as e:                                # noqa: BLE001
+    print("eevee:", e)
+
+
+def shoot(path, az, el, dist, target, lens=68.0, dof=None):
+    cd.lens = lens
+    a, e = math.radians(az), math.radians(el)
+    cam.location = Vector((target.x + dist * math.sin(a) * math.cos(e),
+                           target.y - dist * math.cos(a) * math.cos(e),
+                           target.z + dist * math.sin(e)))
+    look = target - cam.location
+    cam.rotation_euler = look.to_track_quat("-Z", "Y").to_euler()
+    if dof:
+        cd.dof.use_dof = True
+        cd.dof.focus_distance = dist
+        cd.dof.aperture_fstop = dof
+    else:
+        cd.dof.use_dof = False
+    sc.render.filepath = path
+    bpy.ops.render.render(write_still=True)
+    print("SHOT", path)
+
+
+# ① 转台 8 帧（既转位置又转朝向，才不是空转台）
+for i in range(8):
+    shoot(os.path.join(OUT, f"{LABEL}_turn{i:02d}.png"), i * 45.0, 3.0, k * 2.2, center)
+# ② 主图（正面 3/4）
+shoot(os.path.join(OUT, f"{LABEL}_hero.png"), 28.0, 6.0, k * 2.0, center)
+# ③ 脸部特写：**按骨架里的头骨定位**（bbox 顶部是耳朵尖，按比例定位会拍到发顶——踩过）
+head = Vector((center.x, center.y, center.z + 0.30 * k))
+try:
+    hb = arm[0].pose.bones.get("mixamorig:Head")
+    if hb is not None:
+        head = arm[0].matrix_world @ hb.head
+        print("HEAD_BONE", [round(v, 3) for v in head])
+except Exception as e:                                        # noqa: BLE001
+    print("head bone fallback:", e)
+shoot(os.path.join(OUT, f"{LABEL}_face.png"), 14.0, 2.0, k * 0.62, head, lens=85.0, dof=5.6)
+
+print("V9_STILLS_OK", LABEL)

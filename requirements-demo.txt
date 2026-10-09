@@ -1,0 +1,6 @@
+# 极简 Demo 依赖（只用平台无关的能力，不含 Windows 专属件）
+fastapi
+uvicorn
+numpy
+pillow
+httpx

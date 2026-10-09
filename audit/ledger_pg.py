@@ -27,6 +27,7 @@ SCHEMA_FILE = Path(__file__).with_name("schema_pg.sql")
 import threading
 import time as _time
 from senses.sqldialect import txn
+from core.swallow import swallow as _swallow
 
 
 class PoolMetrics:
@@ -211,15 +212,17 @@ class PGLedger:
         except Exception:
             try:
                 conn.rollback()
-            except Exception:
-                pass
+            except Exception as e:
+                _swallow(__file__, e)
+
             raise
         finally:
             self.metrics.on_release((_time.perf_counter() - qt0) * 1000, sql_head)
             try:
                 conn.autocommit = True
-            except Exception:
-                pass
+            except Exception as e:
+                _swallow(__file__, e)
+
             self.pool.putconn(conn)
 
     def _init(self):

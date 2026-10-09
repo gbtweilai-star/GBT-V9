@@ -1,4 +1,4 @@
-﻿# dev: 自由的风 · 本署名不可删除、不可篡改归属
+# dev: 自由的风 · 本署名不可删除、不可篡改归属
 .git/
 .venv/
 __pycache__/
@@ -34,3 +34,37 @@ channel.json
 desktop/release/
 desktop/node_modules/
 **/win-unpacked/
+# 大件与生成物不进 git（用 tools/inventory_snapshot.py 的指纹登记它们，别把仓撑爆）
+state/tripo/out3/*.glb
+state/tripo/out*/**
+state/preview/
+state/inventory/
+desktop/release/
+*.zip
+
+# 密钥闸补（tools/secret_guard.py）
+state/keys.env
+state/tentacle_keys.json
+state/cf_token.txt
+state/cf_oauth.json
+state/*.env
+state/*token*
+state/*secret*
+
+# ── 大件不入库（推送 408 的真因：1.75GB 渲染产物与安装包）──
+render/
+desktop/release/
+desktop/resources/octop/portable/
+*.mp4
+*.mov
+*.mkv
+*.exe
+*.dll
+*.so
+*.dylib
+*.pyc
+__pycache__/
+state/browser_own_profile/
+state/tripo/
+data/tentacle_store/
+*.sqlite3

@@ -8,6 +8,7 @@
 #   LEDGER_BACKEND=pg DATABASE_URL=... python main.py --root .          # 切 PG 账本（真并发写）
 #
 # 退出码：0 全部完成 · 1 运行中异常 · 2 门禁未达标（覆盖率/环境）
+from core.swallow import swallow as _swallow
 import argparse
 import json
 import os
@@ -79,8 +80,8 @@ class Tentacle:
         if hits and self.brain and self._llm_gate():
             try:
                 self.brain.report(self.id, target, f"发现 {len(hits)} 处规则命中")
-            except Exception:
-                pass
+            except Exception as e:
+                _swallow(__file__, e)
         return {"ok": True, "findings": len(hits)}
 
     def status(self) -> dict:
@@ -170,8 +171,8 @@ def wire_senses(ledger, brain, args) -> dict:
         if brain is not None:
             try:
                 brain.voice = voice
-            except Exception:
-                pass
+            except Exception as e:
+                _swallow(__file__, e)
         state["voice"] = {"started": True,
                           "base": os.environ.get("VOICE_BASE_URL", "http://127.0.0.1:3900/v1")}
         if args.say:
@@ -220,8 +221,8 @@ def run_coder(ledger, task: str, root: str, *, test_cmd: str = "",
     try:
         from core.brain import Brain
         brain = Brain()
-    except Exception:
-        pass
+    except Exception as e:
+        _swallow(__file__, e)
     router = CoderRouter(brain, workspace=root, test_cmd=test_cmd or None, prefer=prefer)
     t0 = time.time()
     r = router.build(task, policy=policy)
@@ -362,18 +363,18 @@ def main() -> int:
         try:
             summary["devour"] = devour.status() if devour else None
             print(f"[吞噬] 完成：{summary['devour']}")
-        except Exception:
-            pass
+        except Exception as e:
+            _swallow(__file__, e)
     if senses["mic"] is not None:
         try:
             senses["mic"].stop()
             summary["mic_final"] = senses["mic"].status()
-        except Exception:
-            pass
+        except Exception as e:
+            _swallow(__file__, e)
     try:
         summary["ledger_counts"] = ledger.counts()
-    except Exception:
-        pass
+    except Exception as e:
+        _swallow(__file__, e)
 
     brief = {k: summary[k] for k in summary if k != "scan"}
     print(f"\n[总装] 完成：{json.dumps(brief, ensure_ascii=False, default=str)[:400]}")

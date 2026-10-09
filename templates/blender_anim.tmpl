@@ -1,0 +1,275 @@
+# GBT小土豆V9 · 数字人连续动作模板：驱动骨骼做"活人感"的循环动画，直接渲染成视频
+# dev: 自由的风 · 本署名不可删除、不可篡改归属
+#
+# 主人要求（2026-10-07）："数字人动作要自然，不是放图片上去懂吗。"
+#   → 所以这里**驱动已绑骨模型的骨骼**逐帧算动作（呼吸/重心微摆/头部微动/手臂跟随），
+#     渲成一段**无缝循环的 mp4**，页面用 <video loop> 播 —— 是真动作，不是切图。
+# 骨架名（Tripo 绑骨结果，实测）：tripo::Root / tripo::Spine_0 / tripo::Head_0..2 /
+#   tripo::0_Left_Limb_* / tripo::1_Left_Limb_* / tripo::0_Right_Limb_* / tripo::1_Right_Limb_*
+# 纪律：动作是**连续函数**（正弦叠加 + 相位滞后），首尾同相 → 循环不跳帧；幅度小（活人不是木偶）。
+import bpy, math, os
+from mathutils import Vector
+
+GLB = r"__GLB__"
+OUT_MP4 = r"__OUT_MP4__"
+OUT_POSTER = r"__OUT_POSTER__"
+LABEL = "__LABEL__"
+W, H = __W__, __H__
+SECONDS = __SECONDS__
+FPS = __FPS__
+ACTION = "__ACTION__"          # idle（呼吸站立）/ wave（挥手）/ bow（鞠躬）/ turn（左右看）
+FRONT_OFFSET = __FRONT_OFFSET__   # 正面朝向人工校准角（自动判据偶尔偏 90°）
+
+bpy.ops.wm.read_factory_settings(use_empty=True)
+scene = bpy.context.scene
+try:
+    scene.render.engine = "BLENDER_EEVEE_NEXT"
+except Exception:
+    scene.render.engine = "BLENDER_EEVEE"
+try:
+    scene.eevee.taa_render_samples = 32          # 动画帧多，采样取中档（速度与质量平衡）
+    scene.eevee.use_raytracing = True
+except Exception:
+    pass
+scene.render.resolution_x, scene.render.resolution_y = W, H
+scene.render.fps = int(FPS)
+try:
+    scene.view_settings.view_transform = "AgX"
+    scene.view_settings.look = "AgX - Medium Contrast"
+    scene.view_settings.exposure = 0.32
+except Exception:
+    pass
+
+world = bpy.data.worlds.new("W"); world.use_nodes = True
+nt = world.node_tree
+for n in list(nt.nodes):
+    if n.type != "OUTPUT_WORLD":
+        nt.nodes.remove(n)
+outn = [n for n in nt.nodes if n.type == "OUTPUT_WORLD"][0]
+bg = nt.nodes.new("ShaderNodeBackground")
+bg.inputs["Color"].default_value = (0.14, 0.15, 0.19, 1.0)
+bg.inputs["Strength"].default_value = 0.42
+nt.links.new(bg.outputs["Background"], outn.inputs["Surface"])
+scene.world = world
+
+bpy.ops.import_scene.gltf(filepath=GLB)
+meshes = [o for o in scene.objects if o.type == "MESH"]
+arms = [o for o in scene.objects if o.type == "ARMATURE"]
+if not meshes or not arms:
+    raise SystemExit("模型缺网格或骨架：%s" % GLB)
+arm = arms[0]
+BONES = [b.name for b in arm.data.bones]
+
+
+def bone(*pats):
+    """按关键字找骨头（骨架命名不完全统一，按包含匹配）。"""
+    for p in pats:
+        for n in BONES:
+            if p.lower() in n.lower():
+                return arm.pose.bones.get(n)
+    return None
+
+
+root = bone("Root")
+spine = bone("Spine")
+head = bone("Head")
+# ★按"静止时的位置"分辨手臂链与腿链，绝不无脑转所有 Limb 骨
+#   （真踩过：把腿和手指的骨一起转，网格直接撕裂、脚都飞了）
+_rest = {b.name: b.head_local for b in arm.data.bones}     # PoseBone 没有 head_local，取 data.bones
+_all_h = [v.z for v in _rest.values()]
+_hi = max(_all_h) if _all_h else 1.0
+_lo = min(_all_h) if _all_h else 0.0
+_h = max(1e-6, _hi - _lo)
+_xs = [abs(v.x) for v in _rest.values()]
+_xm = max(_xs) if _xs else 1.0
+arms_chain, legs_chain = [], []
+for b in arm.pose.bones:
+    if "Limb" not in b.name or b.name not in _rest:
+        continue
+    zn = (_rest[b.name].z - _lo) / _h          # 归一高度：1=头顶
+    lateral = abs(_rest[b.name].x) / max(1e-6, _xm)
+    if zn > 0.55 and lateral > 0.25:
+        arms_chain.append(b)
+    elif zn < 0.45:
+        legs_chain.append(b)
+arms_up = [b for b in arms_chain if b.name.rstrip("0123456789").endswith("_") or "_0" in b.name or "_1" in b.name]
+arms_tip = [b for b in arms_chain if b not in arms_up]
+print("驱动骨骼: root=%s spine=%s head=%s 手臂骨=%d(上臂 %d) 腿骨=%d" %
+      (bool(root), bool(spine), bool(head), len(arms_chain), len(arms_up), len(legs_chain)))
+
+
+def clear_pose():
+    for pb in arm.pose.bones:
+        pb.rotation_mode = "XYZ"
+        pb.rotation_euler = (0.0, 0.0, 0.0)
+        pb.location = (0.0, 0.0, 0.0)
+        pb.scale = (1.0, 1.0, 1.0)
+
+
+def apply_pose(t: float) -> None:
+    """t ∈ [0,1) 相位 → 骨骼姿势。全部是正弦叠加，首尾同相，循环无缝。
+
+    幅度纪律（真机教训）：呼吸/微摆 ≤ 1°，鞠躬 ≤ 26°，挥手 ≤ 12°；**只动该动的骨**。
+    """
+    w = 2.0 * math.pi * t
+    clear_pose()
+    # 腿链永远只给极小幅度（重心感），避免撕裂
+    for b in legs_chain:
+        k = 1.0 if _rest[b.name].x > 0 else -1.0
+        b.rotation_euler = (0.0, 0.0, math.radians(k * 0.6 * math.sin(w * 0.5)))
+    if ACTION == "wave":
+        sw = math.sin(2 * math.pi * (t * 2))
+        if root:
+            root.rotation_euler = (math.radians(1.0 * math.sin(w)), 0.0,
+                                   math.radians(0.6 * math.sin(w * 0.5)))
+        if spine:
+            spine.rotation_euler = (math.radians(-0.8), 0.0, math.radians(1.2 + 0.6 * sw))
+        if head:
+            head.rotation_euler = (math.radians(-1.5), math.radians(-2.0 * sw), math.radians(3.0))
+        for b in arms_up:                         # **上臂**大幅抬起（挥手要看得见）
+            k = 1.0 if _rest[b.name].x > 0 else -1.0
+            b.rotation_euler = (0.0, 0.0, math.radians(k * (38.0 + 16.0 * sw)))
+        for b in arms_tip:                        # 末端（手/指）只跟一点点，避免撕裂
+            k = 1.0 if _rest[b.name].x > 0 else -1.0
+            b.rotation_euler = (0.0, 0.0, math.radians(k * (6.0 + 5.0 * sw)))
+        return
+    if ACTION == "bow":
+        k = math.sin(math.pi * t)
+        if root:
+            root.location = (0.0, 0.0, -0.03 * k)
+        if spine:
+            spine.rotation_euler = (math.radians(24.0 * k), 0.0, 0.0)
+        if head:
+            head.rotation_euler = (math.radians(9.0 * k), 0.0, 0.0)
+        for b in arms_chain:
+            b.rotation_euler = (math.radians(3.0 * k), 0.0, 0.0)
+        return
+    if ACTION == "turn":
+        sw = math.sin(w)
+        if head:
+            head.rotation_euler = (math.radians(0.8), math.radians(9.0 * sw), 0.0)
+        if spine:
+            spine.rotation_euler = (math.radians(0.4), math.radians(3.0 * sw), 0.0)
+        if root:
+            root.location = (0.003 * sw, 0.0, 0.0012 * math.sin(2 * w))
+        return
+    # ── 默认：活人站立（呼吸 + 重心微摆 + 头部微动），不动四肢 ──
+    breath = math.sin(w)
+    sway = math.sin(w * 0.5)
+    if root:
+        root.location = (0.0020 * sway, 0.0, 0.0016 * breath)
+        root.rotation_euler = (math.radians(0.30 * breath), 0.0, math.radians(0.45 * sway))
+    if spine:
+        spine.rotation_euler = (math.radians(-0.4 + 0.6 * breath), 0.0, math.radians(0.5 * sway))
+        spine.scale = (1.0, 1.0 + 0.0035 * breath, 1.0)
+    if head:
+        head.rotation_euler = (math.radians(0.35 * math.sin(w * 1.5)),
+                               math.radians(1.0 * math.sin(w * 0.5)),
+                               math.radians(0.25 * sway))
+
+
+# ── 逐帧打 K 帧（首尾同相，循环无缝）──
+frames = max(8, int(round(SECONDS * FPS)))
+for i in range(frames + 1):                     # 多打一帧收尾，播放器切回第 0 帧无跳变
+    scene.frame_set(i + 1)
+    apply_pose((i % frames) / float(frames))
+    for pb in arm.pose.bones:
+        pb.keyframe_insert(data_path="rotation_euler", frame=i + 1)
+        pb.keyframe_insert(data_path="location", frame=i + 1)
+        pb.keyframe_insert(data_path="scale", frame=i + 1)
+for fc in (arm.animation_data.action.fcurves if arm.animation_data and arm.animation_data.action else []):
+    for kp in fc.keyframe_points:
+        kp.interpolation = "BEZIER"
+scene.frame_start, scene.frame_end = 1, frames
+
+# ── 影棚（与静帧同一套：正面判定用脚尖；三点光 + 地面 + 透视景深）──
+import numpy as _np
+
+
+def eval_pts(objs):
+    dg = bpy.context.evaluated_depsgraph_get()
+    out = []
+    for ob in objs:
+        ev = ob.evaluated_get(dg)
+        me = ev.to_mesh()
+        mw = ob.matrix_world
+        out.extend([mw @ v.co for v in me.vertices])
+        ev.to_mesh_clear()
+    return out
+
+
+pts = eval_pts(meshes)
+zs = sorted(p.z for p in pts)
+n = len(zs)
+zl, zh = zs[max(0, int(n*0.004))], zs[min(n-1, int(n*0.996))]
+xs = sorted(p.x for p in pts); ys = sorted(p.y for p in pts)
+xl, xh = xs[max(0, int(n*0.004))], xs[min(n-1, int(n*0.996))]
+yl, yh = ys[max(0, int(n*0.004))], ys[min(n-1, int(n*0.996))]
+high = zh - zl
+cx, cy, cz = (xl+xh)/2.0, (yl+yh)/2.0, (zl+zh)/2.0
+foot = [p for p in pts if p.z < zl + high*0.06]
+if len(foot) >= 20:
+    yb = sum(p.y for p in foot)/len(foot)
+    fs = 1.0 if yb >= cy else -1.0
+else:
+    up = [p for p in pts if p.z > zh - high*0.45]
+    yb = sum(p.y for p in up)/max(1, len(up))
+    fs = 1.0 if yb >= cy else -1.0
+FRONT = Vector((0.0, fs, 0.0)); RT = Vector((FRONT.y, -FRONT.x, 0.0))
+sc = max(xh-xl, high)/2.6
+
+
+def light(pos, energy, size, color):
+    ld = bpy.data.lights.new("L", type="AREA")
+    ld.energy = energy; ld.size = size; ld.color = color
+    lo = bpy.data.objects.new("L", ld); lo.location = pos
+    lo.rotation_euler = (Vector((cx, cy, cz)) - Vector(pos)).to_track_quat("-Z", "Y").to_euler()
+    scene.collection.objects.link(lo)
+
+
+light((cx + FRONT.x*2.4*sc + RT.x*1.7*sc, cy + FRONT.y*2.4*sc + RT.y*1.7*sc, cz + 1.65*sc),
+      420*sc*sc, 2.4*sc, (1.0, 0.975, 0.94))
+light((cx + FRONT.x*1.7*sc - RT.x*2.4*sc, cy + FRONT.y*1.7*sc - RT.y*2.4*sc, cz + 0.45*sc),
+      110*sc*sc, 3.4*sc, (0.93, 0.95, 1.0))
+light((cx - FRONT.x*2.6*sc + RT.x*0.5*sc, cy - FRONT.y*2.6*sc + RT.y*0.5*sc, cz + 2.2*sc),
+      330*sc*sc, 2.0*sc, (1.0, 0.99, 1.0))
+bpy.ops.mesh.primitive_plane_add(size=30*sc, location=(cx, cy, zl - 0.02*sc))
+floor = bpy.context.active_object
+fm = bpy.data.materials.new("floor"); fm.use_nodes = True
+fm.node_tree.nodes["Principled BSDF"].inputs["Base Color"].default_value = (0.19, 0.20, 0.24, 1)
+fm.node_tree.nodes["Principled BSDF"].inputs["Roughness"].default_value = 0.66
+floor.data.materials.append(fm)
+
+cam_data = bpy.data.cameras.new("cam")
+cam_data.lens = 66.0
+cam_data.sensor_fit = "VERTICAL"; cam_data.sensor_height = 24.0
+cam_data.dof.use_dof = True; cam_data.dof.aperture_fstop = 2.6
+focus = bpy.data.objects.new("focus", None); focus.location = (cx, cy, cz)
+scene.collection.objects.link(focus); cam_data.dof.focus_object = focus
+cam = bpy.data.objects.new("cam", cam_data)
+scene.collection.objects.link(cam); scene.camera = cam
+DIST = high * 1.10 * cam_data.lens / cam_data.sensor_height
+AZ, EL = math.radians(18.0 + FRONT_OFFSET), math.radians(3.5)
+cam.location = (cx + math.sin(AZ)*DIST*math.cos(EL), cy - math.cos(AZ)*DIST*math.cos(EL),
+                cz + math.sin(EL)*DIST)
+cam.rotation_euler = (Vector((cx, cy, cz)) - Vector(cam.location)).to_track_quat("-Z", "Y").to_euler()
+
+# ── 出片：mp4（H.264）+ 海报帧 ──
+os.makedirs(os.path.dirname(OUT_MP4), exist_ok=True)
+scene.render.image_settings.file_format = "FFMPEG"
+# ★编解码：用 **WebM/VP9** —— H.264 是专有编解码，开源 Chromium（含无头/部分壳）不带，会黑屏；
+#   VP9 免版税、任何 Chromium 都能播（真机踩过：同一段 mp4 在我这边 w/h=0 播不动）。
+scene.render.ffmpeg.format = "WEBM"
+scene.render.ffmpeg.codec = "WEBM"      # Blender 里 WEBM 容器配的就是 VP9（枚举名就是 WEBM）
+scene.render.ffmpeg.constant_rate_factor = "HIGH"   # 枚举只有 NONE/…/HIGH/MEDIUM/…（无 GOOD）
+try:
+    scene.render.ffmpeg.audio_codec = "NONE"
+except Exception:
+    pass
+scene.render.filepath = OUT_MP4
+bpy.ops.render.render(animation=True)
+scene.frame_set(1)
+scene.render.image_settings.file_format = "PNG"
+scene.render.filepath = OUT_POSTER
+bpy.ops.render.render(write_still=True)
+print("V9_ANIM_OK", OUT_MP4, OUT_POSTER)

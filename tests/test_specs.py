@@ -24,6 +24,29 @@ def test_registry_specs_all_declared_and_valid():
     assert not invalid, f"spec() 不合格: {invalid}"
 
 
+# ═══ 契约对称：注册表里每个能力都必须实现 probe()（NativeSkill 硬契约）═══
+def test_registry_probe_contract_every_skill():
+    """病因（2026-10-07 真机踩到）：`coder` / `voice` 两项具备 name/version/run/spec 的"形"，
+    却漏了 NativeSkill 契约硬要求的 `probe()` ⇒ ① `SkillRegistry.call()` 必抛 AttributeError，
+    能力**实际调用不了**；② `OctopBridge.tool_manifest()` **整条清单崩**。
+    `spec()` 早有对称守卫（上一个用例），`probe()` 一直没有 ⇒ 才漏的网。
+    这里补上对称守卫：注册项必须真能自查，且自查结果必须是 Availability（不许伪报）。
+    """
+    from skills.integrate import build_registry
+    from skills.native import Availability
+
+    reg = build_registry()
+    bad = [n for n, s in reg.skills.items() if not callable(getattr(s, "probe", None))]
+    assert not bad, f"缺 probe() 的能力（违反 NativeSkill 契约）: {bad}"
+
+    # 逐个真自查：必须返回 Availability，且 ok 是 bool（六个内置项实测均 ≤0.2s）
+    for n, s in reg.skills.items():
+        av = s.probe()
+        assert isinstance(av, Availability), f"{n}.probe() 返回类型不对: {type(av)}"
+        assert isinstance(av.ok, bool), f"{n}.probe().ok 必须是 bool"
+        assert hasattr(av, "reason"), f"{n}.probe() 缺 reason（不可用必须给理由）"
+
+
 # ═══ 骨架能力：INFRA 四件同样必须有合格 spec() ═══
 def test_infra_specs_declared_and_valid():
     from core.inference.backends import InferenceRouter

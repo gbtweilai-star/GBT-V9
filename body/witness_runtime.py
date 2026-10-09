@@ -373,15 +373,33 @@ async def flush_voice(app, *, now_fn=time.time, **kw) -> dict:
 
 
 async def probe_loop(app, *, interval=PROBE_INTERVAL):
-    """后台采样。异常绝不拖垮 app（只记日志）。"""
+    """后台采样。异常绝不拖垮 app（只记日志）。
+
+    零见证时**退避**（真机缺陷：一个见证都没登记时，探测仍每分钟跑一次，
+    把 witness_snapshot.revision 空涨到 800+ —— 白写白刷）。改为逐次翻倍到上限，
+    一旦有见证就立刻恢复原节奏。
+    """
+    backoff = interval
+    max_idle = float(os.environ.get("V9_WITNESS_IDLE_MAX", "900"))
     while True:
+        rows = []
         try:
             await probe_once(app)
         except asyncio.CancelledError:
             raise
         except Exception:                                      # noqa: BLE001
             log.exception("witness probe error")
-        await asyncio.sleep(interval)
+        try:
+            led = getattr(getattr(app, "state", None), "ledger", None)
+            rows = await led.fetch_all("SELECT witness_id FROM body_witness_status")
+        except Exception:                                      # noqa: BLE001
+            rows = []
+        if rows:
+            backoff = interval
+        else:
+            backoff = min(max_idle, max(interval, backoff * 2))
+            log.info("witness probe idle（未登记见证）→ 下次 %.0fs 后", backoff)
+        await asyncio.sleep(backoff)
 
 
 async def start(app) -> None:

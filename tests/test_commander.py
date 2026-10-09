@@ -83,13 +83,25 @@ def test_high_risk_requires_local_gate(ledger):
     assert s["escalated"]                              # 卡点升级结构存在
 
 
-def test_high_risk_passes_with_gate_open(ledger):
+def test_high_risk_passes_with_gate_open(ledger, monkeypatch):
+    """已过闸门 ⇒ 卡点消失，错误必须来自**引擎层**（而不是闸门）。
+
+    病因（2026-10-07 真机踩到）：本用例原先隐含假设"本机没有 codex/大脑"。该假设在装了
+    codex-cli 的机器上不成立 —— coder 能力补齐 probe() 真正可用之后，run_chain 会**真的把
+    codex 跑起来**（本机实测挂到 500s 超时）。这里显式把两个引擎标成不可用，把用例钉成
+    确定性：无论本机装没装 codex，都应立刻得到"引擎层诚实失败"。
+    """
+    from skills.engine import BrainEngine, CodexEngine
+
+    monkeypatch.setattr(CodexEngine, "available", lambda self: False)
+    monkeypatch.setattr(BrainEngine, "available", lambda self: False)
+
     plan = {"nodes": [{"id": "step1", "skill": "coder", "goal": "改代码",
                        "inputs": {"task": "加个 healthz"}}]}
     s = _cmd(ledger, plan, gate=lambda tid, name, spec: True).run_chain("改代码")
-    # 无 codex/大脑 → 引擎层诚实失败（但已过闸门，错误来自引擎而非闸门）
     r = s["results"][0]
     assert r.get("needs_confirm") is None and "闸门" not in (r.get("error") or "")
+    assert r.get("ok") is False            # 引擎层诚实失败，绝不伪报成功
 
 
 # ═══ 专业化指令编译 + 提示词渲染 ═══

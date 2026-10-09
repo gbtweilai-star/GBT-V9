@@ -6,6 +6,7 @@
 #   ASR  -> 吞噬能音频支路，转写写独立 transcripts 表（不塞大二进制进账本）
 #   配音 -> 回放导出阶段，还原录像后配音，原档与成品分开存
 #   降级 -> VoiceStudio 挂了不影响扫描/采集/文字告警
+from core.swallow import swallow as _swallow
 import os, json, time, uuid, hashlib, threading, queue, subprocess
 from pathlib import Path
 from dataclasses import dataclass
@@ -80,6 +81,10 @@ class VoiceAdapter:
         self._seen_lock = threading.Lock()
         self._sem = threading.Semaphore(max_concurrent)
         self._stop = threading.Event()
+        # ★2026-10-08：队列**只有 start() 之后才真的播**（那才是 drain 线程）。
+        #   面板此前只构造不 start ⇒ 入队是无声空转，而 voice_bus 还把入队当"已说"。
+        #   这个标记就是给调用方核对"队列到底在不在跑"的。
+        self.started = False
         self.stats = {"done": 0, "failed": 0, "dropped": 0, "deduped": 0}
         if ledger: self._init_table()
 
@@ -114,7 +119,8 @@ class VoiceAdapter:
                         ON CONFLICT (event_id) DO UPDATE SET status=EXCLUDED.status,
                         file=EXCLUDED.file, error=EXCLUDED.error, done_at=datetime('now')""",
                         (event_id, kind, text[:500], status, file, error))
-        except Exception: pass
+        except Exception as e:
+            _swallow(__file__, e)
 
     # ── 入队（去重 + 背压）──
     def enqueue(self, text, event_id=None, priority=1, voice="default"):
@@ -146,6 +152,9 @@ class VoiceAdapter:
 
     # ── 消费线程 ──
     def start(self):
+        if self.started:
+            return                      # 重复 start 不再起第二条 drain 线程
+        self.started = True
         def loop():
             while not self._stop.is_set():
                 try:
@@ -170,7 +179,8 @@ class VoiceAdapter:
         try:
             subprocess.Popen(["ffplay", "-nodisp", "-autoexit", "-loglevel", "quiet",
                               str(path)], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-        except Exception: pass
+        except Exception as e:
+            _swallow(__file__, e)
 
     def stop(self): self._stop.set()
 
@@ -192,6 +202,29 @@ class VoiceAdapter:
                         "file": {"type": "string"}},
             "idempotent": False, "risk": "low",
         }
+
+    def probe(self):
+        """真自查：VoiceStudio TTS 端点是否在线（离线也能跑，绝不返回静态 True）。
+
+        病因（2026-10-07 真机踩到）：本类具备 NativeSkill 的"形"（name/version/run/spec），
+        却漏了契约硬要求的 probe() ⇒ ① SkillRegistry.call("voice") 必抛 AttributeError，
+        能力**实际调用不了**；② OctopBridge.tool_manifest() **整条清单崩**。
+        这里补齐真自查：探一次 REST 根，拿得到 HTTP 响应 = 在线（即便 4xx/5xx 也算"服务在"，
+        只是裸 GET 不被该路径接受）；连不上 = 如实不可用，不给假绿灯。
+        降级口径见文件头：VoiceStudio 挂了不影响扫描/采集/文字告警。
+        """
+        from skills.native import Availability
+
+        try:
+            req = urllib.request.Request(
+                VOICE_BASE, headers={"Authorization": f"Bearer {VOICE_KEY}"})
+            with urllib.request.urlopen(req, timeout=5) as r:
+                return Availability(True, f"VoiceStudio 在线 @ {VOICE_BASE} (HTTP {r.status})")
+        except urllib.error.HTTPError as e:
+            return Availability(True, f"VoiceStudio 在线 @ {VOICE_BASE} (HTTP {e.code})")
+        except Exception as exc:                                       # noqa: BLE001
+            return Availability(False, f"VoiceStudio 不可达 @ {VOICE_BASE}: "
+                                       f"{type(exc).__name__}: {exc}")
 
     def run(self, ctx, request):
         """NativeSkill 适配：request -> enqueue/synthesize"""
@@ -316,3 +349,51 @@ class Dubbing:
         job_id = r.get("id") or r.get("job_id")
         return {"job_id": job_id, "status": r.get("status", "submitted"),
                 "note": "配音成品单独存，不覆盖原档"}
+
+
+# ─────────────────────────────────────────────────────────────
+# 队列清理：VoiceStudio 不在时用**本机通道**（Windows SAPI，默认台湾腔）把积压播掉
+# ─────────────────────────────────────────────────────────────
+def drain_jobs_local(led=None, *, limit: int = 20) -> dict:
+    """把 voice_jobs 里 queued / failed 的任务用本机通道补播，并如实回写状态。
+
+    真机背景：VoiceStudio(3900) 没起时，入队的播报会一直挂在 queued（或记 failed），
+    面板上就是"完成 0 · 队列 N · 失败 M"，看着像没做。这些文本本身有价值（自检/告警），
+    所以用本机免费通道补播掉，并写清走的哪条通道。
+    """
+    if led is None:
+        try:
+            from audit.ledger import Ledger
+            led = Ledger()
+        except Exception as exc:                              # noqa: BLE001
+            return {"ok": False, "reason": f"无账本：{type(exc).__name__}"}
+    try:
+        from senses import voice_sapi as vs
+    except Exception as exc:                                  # noqa: BLE001
+        return {"ok": False, "reason": f"本机语音通道不可用：{type(exc).__name__}"}
+    try:
+        with txn(led) as cur:
+            cur.execute("SELECT event_id, text FROM voice_jobs "
+                        "WHERE status IN ('queued','failed') ORDER BY created_at LIMIT ?",
+                        (int(limit),))
+            rows = cur.fetchall()
+    except Exception as exc:                                  # noqa: BLE001
+        return {"ok": False, "reason": f"读队列失败：{type(exc).__name__}"}
+    done, failed = 0, []
+    for eid, text in rows or []:
+        got = vs.speak(text or "")
+        try:
+            with txn(led) as cur:
+                if got.get("ok"):
+                    cur.execute("UPDATE voice_jobs SET status='done', done_at=datetime('now'),"
+                                " file=?, error=NULL WHERE event_id=?",
+                                (f"sapi:{got.get('ms')}ms 台湾腔", eid))
+                    done += 1
+                else:
+                    cur.execute("UPDATE voice_jobs SET status='failed', error=? "
+                                "WHERE event_id=?", (f"本机通道失败：{got.get('reason')}", eid))
+                    failed.append({"event_id": eid, "reason": got.get("reason")})
+        except Exception as exc:                              # noqa: BLE001
+            failed.append({"event_id": eid, "reason": type(exc).__name__})
+    return {"ok": True, "补播成功": done, "仍失败": len(failed), "明细": failed[:5],
+            "通道": "sapi（台湾腔）", "总数": len(rows or [])}

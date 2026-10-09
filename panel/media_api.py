@@ -6,6 +6,7 @@
 import math, time, json
 from fastapi import APIRouter, Query
 from senses.sqldialect import txn
+from core.swallow import swallow as _swallow
 
 router = APIRouter()
 
@@ -312,8 +313,9 @@ def media_queue_job(job_id: str, events_limit: int = Query(50, ge=1, le=200)):
         try:
             import json as _json
             job["checkpoint"] = _json.loads(job["checkpoint"] or "null")
-        except Exception:
-            pass
+        except Exception as e:
+            _swallow(__file__, e)
+
         return _env({"job": job, "events": ev, "coverage": "observed"})
     except Exception as e:
         return _env(error=str(e), coverage="unavailable")

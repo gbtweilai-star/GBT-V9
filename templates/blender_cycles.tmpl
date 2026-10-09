@@ -1,0 +1,179 @@
+# GBT小土豆V9 · Cycles 成品渲染模板（本地光追，出"最好的一版"）
+# dev: 自由的风 · 本署名不可删除、不可篡改归属
+#
+# 主人要求（2026-10-07）："本地激活使用这个给我做完美来" —— 用本机 Blender 4.2 把成品做到最好。
+#   与 EEVEE 版的区别：Cycles 是**真光线追踪** —— 真实次表面散射（皮肤通透）、
+#   真实全局光与软阴影、真实反射，并启用自带降噪（OpenImageDenoise）。
+# 设备策略：先试 AMD 的 HIP（RX 6500M 若支持会快很多），不行就退回 CPU（慢但一定成）。
+import bpy, math, os
+from mathutils import Vector
+
+GLB = r"__GLB__"
+OUT_DIR = r"__OUT_DIR__"
+LABEL = "__LABEL__"
+W, H = __W__, __H__
+SAMPLES = __SAMPLES__
+FRONT_OFFSET = __FRONT_OFFSET__
+
+bpy.ops.wm.read_factory_settings(use_empty=True)
+scene = bpy.context.scene
+scene.render.engine = "CYCLES"
+# 设备：HIP（AMD）优先，失败退 CPU
+# ★设备纪律（真机踩过）：AMD 核显(RX 6500M/gfx90c) 的 HIP 内核在这台机器上**加载即崩**
+#   （Failed to load HIP kernel kernel_gfx90c.fatbin.zst → Blender 直接挂，Python 都抓不住）。
+#   所以默认 **CPU**（光追质量完全一样，只是慢）；要试 GPU 必须显式 V9_CYCLES_DEVICE=hip。
+dev = os.environ.get("V9_CYCLES_DEVICE", "cpu").strip().lower()
+try:
+    if dev in ("hip", "gpu"):
+        prefs = bpy.context.preferences.addons.get("cycles")
+        if prefs:
+            cp = prefs.preferences
+            cp.compute_device_type = "HIP"
+            cp.get_devices()
+            gpus = [d for d in cp.devices if d.type == "HIP"]
+            if gpus:
+                for d in cp.devices:
+                    d.use = (d.type == "HIP")
+                scene.cycles.device = "GPU"
+                print("Cycles 设备: HIP（AMD 独显）")
+            else:
+                raise RuntimeError("没有 HIP 设备")
+    else:
+        raise RuntimeError("按环境变量走 CPU")
+except Exception as e:                                          # noqa: BLE001
+    scene.cycles.device = "CPU"
+    print("Cycles 设备: CPU（%s）" % str(e)[:60])
+scene.cycles.samples = int(SAMPLES)
+scene.cycles.use_denoising = True
+try:
+    scene.cycles.denoiser = "OPENIMAGEDENOISE"
+except Exception:
+    pass
+scene.cycles.use_adaptive_sampling = True
+scene.cycles.max_bounces = 6
+scene.render.resolution_x, scene.render.resolution_y = W, H
+scene.render.film_transparent = False
+try:
+    scene.view_settings.view_transform = "AgX"
+    scene.view_settings.look = "AgX - Medium Contrast"
+    scene.view_settings.exposure = 0.30
+except Exception:
+    pass
+
+# ── 影棚环境：柔和渐变（Cycles 下环境光就是真实的光源之一）──
+world = bpy.data.worlds.new("W"); world.use_nodes = True
+nt = world.node_tree
+for n in list(nt.nodes):
+    if n.type != "OUTPUT_WORLD":
+        nt.nodes.remove(n)
+outn = [n for n in nt.nodes if n.type == "OUTPUT_WORLD"][0]
+tc = nt.nodes.new("ShaderNodeTexCoord")
+gr = nt.nodes.new("ShaderNodeTexGradient"); gr.gradient_type = "EASING"
+rl = nt.nodes.new("ShaderNodeValToRGB")
+rl.color_ramp.elements[0].color = (0.030, 0.032, 0.042, 1.0)
+rl.color_ramp.elements[1].color = (0.42, 0.45, 0.52, 1.0)
+bg = nt.nodes.new("ShaderNodeBackground"); bg.inputs["Strength"].default_value = 0.85
+nt.links.new(tc.outputs["Generated"], gr.inputs["Vector"])
+nt.links.new(gr.outputs["Color"], rl.inputs["Fac"])
+nt.links.new(rl.outputs["Color"], bg.inputs["Color"])
+nt.links.new(bg.outputs["Background"], outn.inputs["Surface"])
+scene.world = world
+
+bpy.ops.import_scene.gltf(filepath=GLB)
+meshes = [o for o in scene.objects if o.type == "MESH"]
+if not meshes:
+    raise SystemExit("导入后没有网格：%s" % GLB)
+
+
+def eval_pts(objs):
+    dg = bpy.context.evaluated_depsgraph_get()
+    out = []
+    for ob in objs:
+        ev = ob.evaluated_get(dg)
+        me = ev.to_mesh()
+        mw = ob.matrix_world
+        out.extend([mw @ v.co for v in me.vertices])
+        ev.to_mesh_clear()
+    return out
+
+
+pts = eval_pts(meshes)
+def rob(v):
+    v = sorted(v); n = len(v)
+    return v[max(0, int(n*0.004))], v[min(n-1, int(n*0.996))]
+xl, xh = rob([p.x for p in pts]); yl, yh = rob([p.y for p in pts]); zl, zh = rob([p.z for p in pts])
+high = zh - zl
+cx, cy, cz = (xl+xh)/2.0, (yl+yh)/2.0, (zl+zh)/2.0
+foot = [p for p in pts if p.z < zl + high*0.06]
+if len(foot) >= 20:
+    yb = sum(p.y for p in foot)/len(foot); fs = 1.0 if yb >= cy else -1.0
+else:
+    up = [p for p in pts if p.z > zh - high*0.45]
+    yb = sum(p.y for p in up)/max(1, len(up)); fs = 1.0 if yb >= cy else -1.0
+FRONT = Vector((0.0, fs, 0.0)); RT = Vector((FRONT.y, -FRONT.x, 0.0))
+sc = max(xh-xl, high)/2.6
+
+# ── 三点光（Cycles 下面积光会自然产生柔影）──
+def light(pos, energy, size, color):
+    ld = bpy.data.lights.new("L", type="AREA")
+    ld.energy = energy; ld.size = size; ld.color = color
+    ld.shape = "DISK"
+    lo = bpy.data.objects.new("L", ld); lo.location = pos
+    lo.rotation_euler = (Vector((cx, cy, cz)) - Vector(pos)).to_track_quat("-Z", "Y").to_euler()
+    scene.collection.objects.link(lo)
+
+
+light((cx + FRONT.x*2.3*sc + RT.x*1.7*sc, cy + FRONT.y*2.3*sc + RT.y*1.7*sc, cz + 1.6*sc),
+      160*sc*sc, 1.8*sc, (1.0, 0.975, 0.94))        # 主光（暖，柔）
+light((cx + FRONT.x*1.6*sc - RT.x*2.4*sc, cy + FRONT.y*1.6*sc - RT.y*2.4*sc, cz + 0.5*sc),
+      45*sc*sc, 3.0*sc, (0.93, 0.95, 1.0))          # 补光（冷）
+light((cx - FRONT.x*2.5*sc + RT.x*0.5*sc, cy - FRONT.y*2.5*sc + RT.y*0.5*sc, cz + 2.1*sc),
+      120*sc*sc, 1.6*sc, (1.0, 0.99, 1.0))          # 轮廓光
+bpy.ops.mesh.primitive_plane_add(size=30*sc, location=(cx, cy, zl - 0.02*sc))
+floor = bpy.context.active_object
+fm = bpy.data.materials.new("floor"); fm.use_nodes = True
+fm.node_tree.nodes["Principled BSDF"].inputs["Base Color"].default_value = (0.20, 0.21, 0.25, 1)
+fm.node_tree.nodes["Principled BSDF"].inputs["Roughness"].default_value = 0.62
+floor.data.materials.append(fm)
+
+cam_data = bpy.data.cameras.new("cam")
+cam_data.lens = 70.0
+cam_data.sensor_fit = "VERTICAL"; cam_data.sensor_height = 24.0
+cam_data.dof.use_dof = True; cam_data.dof.aperture_fstop = 2.2
+focus = bpy.data.objects.new("focus", None); focus.location = (cx, cy, cz)
+scene.collection.objects.link(focus); cam_data.dof.focus_object = focus
+cam = bpy.data.objects.new("cam", cam_data)
+scene.collection.objects.link(cam); scene.camera = cam
+DIST = high * 1.10 * cam_data.lens / cam_data.sensor_height
+EL = math.radians(3.0)
+
+
+def place(turn_deg, dist, el=EL, target=None):
+    th = math.radians(turn_deg + FRONT_OFFSET)
+    dx = FRONT.x*math.cos(th) + RT.x*math.sin(th)
+    dy = FRONT.y*math.cos(th) + RT.y*math.sin(th)
+    tx, ty, tz = target or (cx, cy, cz)
+    cam.location = (tx + dx*dist*math.cos(el), ty + dy*dist*math.cos(el), tz + math.sin(el)*dist)
+    cam.rotation_euler = (Vector((tx, ty, tz)) - Vector(cam.location)).to_track_quat("-Z", "Y").to_euler()
+
+
+os.makedirs(OUT_DIR, exist_ok=True)
+shot = os.environ.get("V9_CYCLES_SHOTS", "hero,front,side,back,face").split(",")
+for s in shot:
+    s = s.strip()
+    if s == "hero":
+        place(20.0, DIST)
+    elif s == "front":
+        place(0.0, DIST)
+    elif s == "side":
+        place(90.0, DIST)
+    elif s == "back":
+        place(180.0, DIST)
+    elif s == "face":
+        place(14.0, DIST*0.30, el=math.radians(1.5), target=(cx, cy, zh - high*0.10))
+    else:
+        continue
+    scene.render.filepath = OUT_DIR + "/" + LABEL + "_c_" + s + ".png"
+    bpy.ops.render.render(write_still=True)
+    print("cycles 完成:", s, flush=True)
+print("V9_CYCLES_OK", OUT_DIR, LABEL)

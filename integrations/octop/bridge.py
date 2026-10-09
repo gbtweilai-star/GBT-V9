@@ -3,6 +3,7 @@
 #
 # Octop 的插件/工具扩展点以拉取后实际版本为准（MIT 仓库未承诺稳定插件 API），
 # 因此这里走两条稳妥通道：① REST /api 挂工具调用 ② WebSocket 桥接聊天事件。
+from core.swallow import swallow as _swallow
 import os, json, httpx
 from skills.native import SkillContext
 
@@ -29,15 +30,35 @@ class OctopBridge:
 
     # ── ② 能力清单推给 Octop（供其 Agent 发现可用工具）──
     def tool_manifest(self):
-        return [{"name": n, "version": s.version, "kind": "native",
-                 "probe": s.probe().__dict__} for n, s in self.reg.skills.items()]
+        """逐能力真自查后汇总成清单。**任一能力违反契约，也不许拖垮整条清单**。
+
+        病因（2026-10-07 真机踩到）：本方法原先直接 `s.probe().__dict__`，只要注册表里
+        有一项没实现 probe()（真机上是 `coder`/`voice`），**整条 manifest 直接抛**
+        AttributeError，Octop 侧的能力发现面全灭（而 SkillRegistry 自己的 probe_all()
+        是防御式的，两边口径不一致才露出这个洞）。
+        改为：缺 probe / probe 抛异常的能力**如实标成不可用**，其余照常上报——降级不静默，
+        也绝不因为一个坏苹果丢掉整筐。
+        """
+        out = []
+        for n, s in self.reg.skills.items():
+            try:
+                av = s.probe()
+                probe = (av.__dict__ if hasattr(av, "__dict__")
+                         else {"ok": bool(getattr(av, "ok", False)), "detail": str(av)})
+            except Exception as exc:                                  # noqa: BLE001
+                probe = {"ok": False, "reason": f"probe 未实现/异常: {type(exc).__name__}: {exc}",
+                         "detail": {}}
+            out.append({"name": n, "version": getattr(s, "version", ""),
+                        "kind": "native", "probe": probe})
+        return out
 
     # ── ③ 聊天桥接：Octop WS 消息 → 主脑 → 回写（含语音回执）──
     async def relay_chat(self, agent_id, session_id, text):
         reply = self.brain.chat([{"role": "user", "content": text}], json_mode=False)
         if getattr(self.brain, "voice", None):
             try: self.brain.voice.enqueue(reply, event_id=f"octop-{session_id}")
-            except Exception: pass
+            except Exception as e:
+                _swallow(__file__, e)
         return reply
 
     def health(self):

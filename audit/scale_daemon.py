@@ -4,6 +4,7 @@
 # 重要: Tiger 计算层不是 autoscaling，resize 会短暂重启（通常<1分钟）
 #   -> 所以必须: 连续越阈值才动、冷却期内不重复、有预算上限、全程审计
 #   -> 自动降配建议人工批准（默认关闭）
+from core.swallow import swallow as _swallow
 import os, json, time, threading, subprocess
 from enum import Enum
 from senses.sqldialect import txn
@@ -48,8 +49,9 @@ class ScaleDaemon:
         try:
             with txn(self.led) as cur:
                 cur.execute(STATE_DDL)
-        except Exception:
-            pass
+        except Exception as e:
+            from core import swallow as _sw; _sw.swallow(__file__, e)
+
         self._stop = threading.Event()
         self._streak = 0
         self._last_scale = 0.0
@@ -110,8 +112,9 @@ class ScaleDaemon:
         if not self._owns_control and not self.acquire_control():
             try:
                 self.watch.sample()
-            except Exception:
-                pass
+            except Exception as e:
+                from core import swallow as _sw; _sw.swallow(__file__, e)
+
             return {"state": "observer", "note": "未持有控制器锁"}
         adv = self.watch.advise()
         used = adv["used_pct"]
@@ -192,8 +195,9 @@ class ScaleDaemon:
                 self._persist_state_sqlite(row)
             else:
                 self._persist_state_pg(row)
-        except Exception:
-            pass
+        except Exception as e:
+            from core import swallow as _sw; _sw.swallow(__file__, e)
+
 
     def _persist_state_pg(self, row: dict) -> None:
         with self.led._tx(write=True) as c, c.cursor() as cur:
@@ -247,6 +251,7 @@ class ScaleDaemon:
         def loop():
             while not self._stop.wait(60):        # 每分钟判一次
                 try: self.tick()
-                except Exception: pass
+                except Exception as e:
+                    _swallow(__file__, e)
         threading.Thread(target=self.tick and loop, daemon=True, name="scale-daemon").start()
     def stop(self): self._stop.set()

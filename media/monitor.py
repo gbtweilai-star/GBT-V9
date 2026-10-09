@@ -11,6 +11,7 @@ import time
 import uuid
 
 from media.metrics import queue_stats, read_vram, vram_snapshot
+from core.swallow import swallow as _swallow
 
 TH = {
     "depth_warn": float(os.environ.get("MEDIA_WARN_DEPTH", "50")),
@@ -122,16 +123,18 @@ class MediaMonitor:
                 self.voice.say_alert({
                     "level": "critical", "label": key,
                     "value": value, "unit": "", "episode": r.episode_id})
-            except Exception:
-                pass
+            except Exception as e:
+                _swallow(__file__, e)
+
         return r
 
     def _loop(self):
         while not self._stop.is_set():
             try:
                 self.sample_once()
-            except Exception:
-                pass
+            except Exception as e:
+                _swallow(__file__, e)
+
 
     def start(self):
         if self._t is not None and self._t.is_alive():
