@@ -75,12 +75,24 @@ def eye_fps(seconds: float = 1.0) -> dict:
 def sync_benchmark(n: int = 60, *, jitter: int = 6, restore: bool = True) -> dict:
     """眼手同步闭环基准：每次 = 抓帧 → 决策(对准) → 移到目标 → 再抓帧复核。"""
     start = cursor()
+    # ★ 预热：丢 3 帧（首次抓屏/首次驱动常有一次系统级卡顿，别把它算进基准）
+    for _ in range(3):
+        grab(); move(*cursor()); cursor()
+    try:
+        sw = _sct().monitors[0]["width"]; sh = _sct().monitors[0]["height"]
+    except Exception:  # noqa: BLE001
+        sw, sh = 1920, 1080
+    # ★ 安全区：只在中部 60% 内移动（避开屏幕边缘的夹取/吸附）
+    sx0, sx1 = int(sw * 0.2), int(sw * 0.8)
+    sy0, sy1 = int(sh * 0.2), int(sh * 0.8)
     loops, cap_ms, act_ms, ver_ms, ages, hits, visual_changes = [], [], [], [], [], 0, 0
+    devs = []
     for i in range(n):
         dx = jitter if i % 2 == 0 else -jitter
         dy = jitter if i % 3 == 0 else -jitter
         cur = cursor()
-        tx, ty = cur[0] + dx, cur[1] + dy
+        tx = min(sx1, max(sx0, cur[0] + dx))
+        ty = min(sy1, max(sy0, cur[1] + dy))
         t0 = time.time()
         pre = grab_around(tx, ty)         # 眼：抓**目标位置周围**的窗口（决策依据）
         t1 = time.time()
@@ -96,7 +108,9 @@ def sync_benchmark(n: int = 60, *, jitter: int = 6, restore: bool = True) -> dic
         settle = time.time()
         while time.time() - settle < 0.05 and (abs(got[0] - tx) > 2 or abs(got[1] - ty) > 2):
             got = cursor()
-        ok = (abs(got[0] - tx) <= 2 and abs(got[1] - ty) <= 2)
+        dev = max(abs(got[0] - tx), abs(got[1] - ty))
+        devs.append(dev)
+        ok = dev <= 2
         changed = _signature(post) != sig0
         visual_changes += 1 if changed else 0
         hits += 1 if ok else 0
@@ -115,6 +129,7 @@ def sync_benchmark(n: int = 60, *, jitter: int = 6, restore: bool = True) -> dic
            "闭环ms": {"p50": pct(loops, 50), "p95": pct(loops, 95), "max": round(max(loops), 2)},
            "闭环fps": round(1000.0 / max(0.001, pct(loops, 50)), 1),
            "到位率": round(hits / max(1, n) * 100, 1),
+           "偏差px": {"p50": pct(devs, 50), "p95": pct(devs, 95), "max": max(devs) if devs else None},
            "视觉变化率": round(visual_changes / max(1, n) * 100, 1),
            "口径注": "mss 抓屏不含鼠标指针 ⇒ 视觉变化率低属正常；到位率才是手真到位的证据；真视觉确认见下一步 aim_test（红点靶）",
            "眼独立fps": eye_fps(0.6),
