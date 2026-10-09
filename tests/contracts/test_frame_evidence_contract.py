@@ -18,7 +18,9 @@ def backend(request): return request.param
 @pytest.fixture
 def pg_dsn():
     dsn = os.getenv("TEST_DATABASE_URL")
-    if dsn: return dsn
+    if dsn:
+        yield dsn      # ★ 修：fixture 必须 yield（原来 return ⇒ pytest 报 did not yield a value）
+        return
     if not os.getenv("RUN_PG_CONTRACTS"):
         pytest.skip("设 RUN_PG_CONTRACTS=1 或 TEST_DATABASE_URL 才跑 PG 契约")
     try:
