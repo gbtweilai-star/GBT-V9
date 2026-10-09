@@ -58,25 +58,34 @@ def mouth(text: str, *, speak: bool = False) -> dict:
     return out
 
 
-def require_eye(*, max_age_ms: float = DEFAULT_MAX_AGE_MS, wait_ms: float = 1200.0) -> dict:
-    """**动手前必须调它**：等一次新鲜取景；取不到就返回 ok=False（调用方必须据此拒动）。"""
-    # ★ 修：眼走目击证词（按动作类型选对眼；流不新鲜就当场抓）
+def require_eye(*, max_age_ms: float = DEFAULT_MAX_AGE_MS, wait_ms: float = 1200.0, kind: str = "desktop") -> dict:
+    """动手前必须调它：给出这次动作该用的眼的新鲜度（目击证词）。"""
+    try:
+        from core import eyewitness as EW
+        return EW.witness(kind, max_age_ms=max_age_ms)
+    except Exception as e:  # noqa: BLE001
+        return {"ok": False, "拒动原因": "目击证词不可用: %s" % type(e).__name__}
+
+
+def act(action, *, decision: dict, max_age_ms: float = DEFAULT_MAX_AGE_MS,
+        eyes_name: str = "main", expect_change: bool = True, verify: str = "screen") -> dict:
+    """**唯一的动手口**：眼→脑→手→验；缺任一步拒动。"""
+    t0 = time.time()
+    d = decision or {}
+    # ① 眼：目击证词（按动作类型选对眼；流不新鲜就当场抓）
     from core import eyewitness as _EW
-    _kind = str((decision or {}).get("眼", "desktop"))
+    _kind = str(d.get("眼", "desktop"))
     _w = _EW.witness(_kind, max_age_ms=max_age_ms)
-    look, age = _w, _w.get("帧龄ms")
     steps = {"眼": False, "脑": False, "手": False, "验": False}
-    # ① 眼
     if not _w.get("ok"):
         rec = {"at": time.strftime("%Y-%m-%dT%H:%M:%S"), "抓": "act", "拒动": True,
                "目击证词": _w, "在哪一步": "①眼",
-               "读数": _w.get("拒动原因") or ("帧龄 %s ms" % age),
+               "读数": _w.get("拒动原因") or _w,
                "口径": "没有新鲜取景 ⇒ 不许动手（按动作选对眼；抓不到才拒）"}
         _log(rec)
         return rec
     steps["眼"] = True
-    # ② 脑
-    d = decision or {}
+    # ② 脑：必须有目标与理由
     if not (d.get("目标") and d.get("理由")):
         rec = {"at": time.strftime("%Y-%m-%dT%H:%M:%S"), "抓": "act", "拒动": True,
                "在哪一步": "②脑", "读数": "decision 缺 目标/理由（收到 %s）" % list(d),
@@ -84,16 +93,18 @@ def require_eye(*, max_age_ms: float = DEFAULT_MAX_AGE_MS, wait_ms: float = 1200
         _log(rec)
         return rec
     steps["脑"] = True
-    # ③ 手 + ④ 验（复用 vision_loop 的"手打完抓下一帧复核"）
-    # ④验 两种口径：screen=看屏幕像素变化；return=用**动作自己的回执**（自家 headless 浏览器不改屏幕，硬看像素会误判成没做成）
+    # ③ 手 + ④ 验（复用 vision_loop 的 手打完抓下一帧复核 或 动作回执）
     _ret = {}
-
     def _wrapped():
         out = action()
         _ret["值"] = out
         return out
-
-    r = lp.act_and_verify(_wrapped, verify_ms=float(d.get("复核等待ms") or 150.0))
+    try:
+        from core import vision_loop as VL
+        lp = VL.eyes(eyes_name)
+        r = lp.act_and_verify(_wrapped, verify_ms=float(d.get("复核等待ms") or 150.0))
+    except Exception as e:  # noqa: BLE001
+        r = {"动作": {"做没做": False}, "错": type(e).__name__}
     steps["手"] = bool((r.get("动作") or {}).get("做没做"))
     changed = r.get("画面变化")
     if verify == "return":
@@ -102,14 +113,13 @@ def require_eye(*, max_age_ms: float = DEFAULT_MAX_AGE_MS, wait_ms: float = 1200
         steps["验"] = bool(r.get("复核帧")) and (changed is not None)
     ok = all(steps.values()) and ((changed is not False) if (expect_change and verify == "screen") else True)
     rec = {"at": time.strftime("%Y-%m-%dT%H:%M:%S"), "抓": "act", "拒动": not ok,
-           "步骤": steps, "眼": look, "脑": d.get("目标"), "理由": d.get("理由"),
-           "真响应ms": r.get("真响应ms"), "复核帧": r.get("复核帧"), "画面变化": changed,
-           "验的口径": verify, "动作回执": (_ret.get("值") if isinstance(_ret.get("值"), dict) else None),
-           "变化量": r.get("变化量"), "总ms": round((time.time() - t0) * 1000, 1),
-           "口径": "眼→脑→手→验 四步全绿才算动手；画面没变要如实报（不假装做成了）"}
+           "步骤": steps, "目击证词": _w, "脑": d.get("目标"), "理由": d.get("理由"),
+           "复核帧": r.get("复核帧"), "画面变化": changed, "验的口径": verify,
+           "动作回执": (_ret.get("值") if isinstance(_ret.get("值"), dict) else None),
+           "总ms": round((time.time() - t0) * 1000, 1),
+           "口径": "眼→脑→手→验 四步全绿才算动手；画面没变要如实报"}
     _log(rec)
     return rec
-
 
 def blind_spots() -> dict:
     """**扫瞎子缝**：V9 里哪些动手口没走本闸（静态判，给文件行号）。"""
@@ -122,7 +132,7 @@ def blind_spots() -> dict:
             continue
         src = p.read_text(encoding="utf-8", errors="replace")
         # 认两种过闸法：接 senses_gate，或把眼钉在自己身上（引用 vision_loop 并读帧龄）
-        uses_gate = ("senses_gate" in src) or ("vision_loop" in src and "帧龄" in src)
+        uses_gate = ("senses_gate" in src) or ("vision_loop" in src and "帧龄" in src) or ("eyewitness" in src)
         # 找"能真动手"的调用：click/type/press/moveTo/keyDown 之类
         hits = []
         for i, line in enumerate(src.splitlines(), 1):
