@@ -802,6 +802,21 @@ document.addEventListener('keydown',function(e){
                    if "</body>" in out else out + _w)
     except Exception as e:
         _swallow(__file__, e)
+    # ★ 项目最底下的署名（主人令 2026-10-10：品牌 + Logo + 开发者：自由的风）
+    if "v9-credit" not in out:
+        _credit = (
+            '<div id="v9-credit" style="max-width:1000px;margin:28px auto 20px;padding:16px 18px;'
+            'border-top:1px solid #1e2635;color:#8fb2d9;text-align:center;'
+            'font:12.5px/1.95 system-ui;line-height:1.95">'
+            '<img src="/logo.png" alt="GBT小土豆V9" style="height:44px;vertical-align:middle;'
+            'margin-right:10px;filter:drop-shadow(0 0 10px #2a6cb055)">'
+            '<b style="color:#a5d6ff;font-size:15px">GBT小土豆V9</b>'
+            '<div style="margin-top:8px">开发者：自由的风</div>'
+            '<div>个人独立开发者，喜欢研究和设计智能体，希望有专业人士指点，谢谢。</div>'
+            '<div>我不懂代码，但我能解决代码问题，也能设计出让市面上那些中间商「送温暖」的能力。</div>'
+            '</div>')
+        out = (out.replace("</body>", _credit + "\n</body>", 1)
+               if "</body>" in out else out + _credit)
     return out
 
 
