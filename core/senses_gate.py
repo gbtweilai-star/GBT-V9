@@ -99,6 +99,37 @@ def act(action, *, decision: dict, max_age_ms: float = DEFAULT_MAX_AGE_MS,
         out = action()
         _ret["值"] = out
         return out
+    r = {}
+    try:
+        from core import vision_loop as VL
+        r = VL.eyes(eyes_name).act_and_verify(_wrapped, verify_ms=float(d.get("复核等待ms") or 150.0))
+    except Exception as e:  # noqa: BLE001
+        r = {"错": type(e).__name__}
+    # ★ 铁律：动作必须**真被调用过**才算过（复核那步没调到就当场补调一次）
+    if not _ret:
+        try:
+            _wrapped()
+        except Exception as e:  # noqa: BLE001
+            r["动作错"] = type(e).__name__
+    steps["手"] = bool(_ret) or bool((r.get("动作") or {}).get("做没做"))
+    changed = r.get("画面变化")
+    if verify == "return":
+        steps["验"] = bool(_ret.get("值")) and bool((_ret.get("值") or {}).get("ok", True))
+    else:
+        steps["验"] = bool(r.get("复核帧")) and (changed is not None)
+    ok = all(steps.values()) and ((changed is not False) if (expect_change and verify == "screen") else True)
+    rec = {"at": time.strftime("%Y-%m-%dT%H:%M:%S"), "抓": "act", "拒动": not ok,
+           "步骤": steps, "目击证词": _w, "脑": d.get("目标"), "理由": d.get("理由"),
+           "复核帧": r.get("复核帧"), "画面变化": changed, "验的口径": verify,
+           "真响应ms": r.get("真响应ms"),
+           "动作回执": (_ret.get("值") if isinstance(_ret.get("值"), dict) else None),
+           "总ms": round((time.time() - t0) * 1000, 1),
+           "口径": "眼→脑→手→验 四步全绿才算动手；动作必须真被调用过"}
+    _ret = {}
+    def _wrapped():
+        out = action()
+        _ret["值"] = out
+        return out
     try:
         from core import vision_loop as VL
         lp = VL.eyes(eyes_name)
