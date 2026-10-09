@@ -65,26 +65,18 @@ def _sct():
 
 
 def find_color(img, want: str, tol: int = 60):
-    """在帧里找目标色的质心（不做 API 取值，纯视觉搜索）。"""
-    raw = bytes(getattr(img, "raw", b"")) if hasattr(img, "raw") else None
-    if raw:
-        import mss.tools
-        bgra = img.bgra if hasattr(img, "bgra") else img.raw
-    else:
-        bgra = img.bgra
+    """在帧里找目标色的质心（numpy 向量化：全屏也能毫秒级）。"""
+    import numpy as np
     w, h = img.width, img.height
-    tgt = {"green": (0x00, 0xFF, 0x44), "red": (0xFF, 0x20, 0x20)}[want]
-    sx = sy = n = 0
-    step = 2
-    for y in range(0, h, step):
-        row = y * w * 4
-        for x in range(0, w, step):
-            i = row + x * 4
-            b, g, r = bgra[i], bgra[i + 1], bgra[i + 2]
-            if abs(r - tgt[0]) < tol and abs(g - tgt[1]) < tol and abs(b - tgt[2]) < tol:
-                sx += x; sy += y; n += 1
-    return {"x": sx / n, "y": sy / n, "像素": n} if n else None
-
+    a = np.frombuffer(img.bgra, dtype=np.uint8).reshape(h, w, 4).astype(np.int16)
+    b_, g_, r_ = a[:, :, 0], a[:, :, 1], a[:, :, 2]
+    tr, tg, tb = {"green": (0x00, 0xFF, 0x44), "red": (0xFF, 0x20, 0x20)}[want]
+    mask = (np.abs(r_ - tr) < tol) & (np.abs(g_ - tg) < tol) & (np.abs(b_ - tb) < tol)
+    n = int(mask.sum())
+    if n == 0:
+        return None
+    ys, xs = np.nonzero(mask)
+    return {"x": float(xs.mean()), "y": float(ys.mean()), "像素": n}
 
 def trials(n: int = 15) -> dict:
     from core import eye_hand as EH
@@ -102,18 +94,19 @@ def trials(n: int = 15) -> dict:
             time.sleep(0.4)
             miss += 1
             continue
-        EH.move(int(g["x"]), int(g["y"]))
-        EH.click()
+        t1b = time.time()
+        EH.move(int(g["x"]), int(g["y"])); EH.click()
         t2 = time.time()
-        time.sleep(0.12)
+        time.sleep(0.10)   # 给靶窗重绘的时间（不计入任何阶段）
+        t3a = time.time()
         img2 = sct.grab(region)
         t3 = time.time()
         r = find_color(img2, "red")
         ok = bool(r)
         hits += 1 if ok else 0
         miss += 0 if ok else 1
-        find_ms.append((t1 - t0) * 1000); act_ms.append((t2 - t1) * 1000)
-        verify_ms.append((t3 - t2) * 1000); loop_ms.append((t3 - t0) * 1000)
+        find_ms.append((t1 - t0) * 1000); act_ms.append((t2 - t1b) * 1000)
+        verify_ms.append((t3 - t3a) * 1000); loop_ms.append((t3 - t0) * 1000)
         time.sleep(0.25)
 
     def pct(a, p):
