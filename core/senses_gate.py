@@ -119,7 +119,7 @@ def act(action, *, decision: dict, max_age_ms: float = DEFAULT_MAX_AGE_MS,
         steps["验"] = bool(ret) and bool((ret or {}).get("ok", True)) if isinstance(ret, dict) else bool(ret)
     ok = all(steps.values()) and (err is None) and ((changed is not False) if verify == "screen" else True)
     rec = {"at": time.strftime("%Y-%m-%dT%H:%M:%S"), "抓": "act", "拒动": not ok,
-           "步骤": steps, "目击证词": _w, "脑": d.get("目标"), "理由": d.get("理由"),
+           "步骤": steps, "眼": _w, "目击证词": _w, "脑": d.get("目标"), "理由": d.get("理由"),
            "真响应ms": true_resp_ms, "复核帧": post_frame, "画面变化": changed,
            "验的口径": verify, "动作回执": (ret if isinstance(ret, dict) else None),
            "动作错": err, "总ms": round((time.time() - t0) * 1000, 1),

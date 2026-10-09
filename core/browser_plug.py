@@ -89,7 +89,8 @@ def pilot(tentacle: str, action: str, **args) -> dict:
        取不到新鲜帧就**拒动**（不许传统瞎子操作）。只读动作(open/read/tabs)不受限。
     """
     t0 = time.time()
-    READ_ONLY = ("read", "tabs", "shot", "eval", "back")
+    # ★ 修：open/close 是**引导动作**（否则死锁：没浏览器→抓不到眼→open 被拒→永远起不来）
+    READ_ONLY = ("read", "tabs", "shot", "eval", "back", "open", "close")
     if action and action.strip().lower() not in READ_ONLY:
         try:
             # ★ 修：浏览器动作要用**浏览器自己的眼**（原来拿桌面流判 ⇒ 频繁误拒）
