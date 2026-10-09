@@ -92,6 +92,30 @@ async def lipsync(text: str = "", duration: float = 0.0) -> dict:
     return LS.timeline(text, duration)
 
 
+@router.get("/api/sider/status")
+async def sider_status(probe: bool = True) -> dict:
+    """Sider 插头状态（不破坏/不绕检测；用她自己的会话）。"""
+    import asyncio as _a
+    from core import sider_plug as SP
+    return await _a.to_thread(SP.status, probe=probe)
+
+
+@router.post("/api/sider/hand")
+async def sider_hand(payload: dict) -> dict:
+    """把任务递进 Sider（她的会话里）：{"task":"...","submit":false}"""
+    import asyncio as _a
+    from core import sider_plug as SP
+    b = payload or {}
+    return await _a.to_thread(SP.hand, str(b.get("task") or ""), submit=bool(b.get("submit")))
+
+
+@router.post("/api/sider/login-window")
+async def sider_login_window() -> dict:
+    """开一次可见登录窗（她的 profile）：登入用你自己的账号，我不碰密码。"""
+    from core import sider_plug as SP
+    return SP.open_login()
+
+
 @router.get("/api/dh/boot")
 async def dh_boot_status() -> dict:
     """数字人启动口：记忆 + 六步带路 + 开场白（一开机就带路）。"""

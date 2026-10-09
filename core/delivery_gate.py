@@ -48,6 +48,8 @@ CAPABILITIES: tuple = (
     ("禁求助闸（不许求用户帮忙）", "纪律", "tools/verify_no_begging.py"),
     ("四觉闭环（视觉钉死·眼脑手验+耳嘴）", "感知", "tools/verify_senses_gate.py"),
     ("编队实时面板（一页看全谁在干活）", "面板", "tools/verify_fleet_live.py"),
+    ("她的脑子（Agnes 云脑优先 + 本地兜底）", "智能", "tools/verify_brain_v9.py"),
+    ("她五面插座（chat/code/hand/create/wisebase·我们模型驱动）", "插座", "tools/verify_sider_sockets.py"),
     ("每页代码双向绑定（无死角穿透）", "穿透", "tools/verify_file_binding.py"),
     ("模块闭环硬规定", "闸", "tools/verify_modular_closure.py"),
     ("模块式部署（蓝图/装/验）", "部署", "tools/verify_modular_deploy.py"),

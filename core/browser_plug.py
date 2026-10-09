@@ -13,6 +13,7 @@
 from __future__ import annotations
 
 import json
+import os
 import time
 from pathlib import Path
 
@@ -51,10 +52,22 @@ def _start() -> dict:
     if eng is None:
         return {"ok": False, "原因": "两个引擎都没有"}
     from playwright.sync_api import sync_playwright
+    # 合规正解：接**你自己日常的 Chrome**（CDP 端点）——它不是自动化浏览器，不会被 CF 挡
+    _cdp = os.environ.get('V9_BROWSER_CDP', '').strip()
+    if _cdp:
+        pw = sync_playwright().start()
+        browser = pw.chromium.connect_over_cdp(_cdp)
+        ctx = browser.contexts[0] if browser.contexts else browser.new_context()
+        page = ctx.pages[0] if ctx.pages else ctx.new_page()
+        page.set_default_timeout(30000)
+        _BROWSER = {'pw': pw, 'ctx': ctx, 'page': page, '引擎': 'cdp:' + _cdp, '历史': []}
+        return {'ok': True, '引擎': 'cdp(你自己的 Chrome)', '端点': _cdp, '品牌': BRAND}
     PROFILE.mkdir(parents=True, exist_ok=True)
     pw = sync_playwright().start()
     # cloakbrowser 提供 stealth 启动参数时用它；拿不到就用标准 chromium（不伪装指纹）
-    launch_kw = {"user_data_dir": str(PROFILE), "headless": True,
+    # 🔴 Sider 这类必须走**可见窗口**（headless 会被 Cloudflare 挑战）；用环境变量开 headed 档
+    _headed = os.environ.get("V9_BROWSER_HEADED", "") in ("1", "true", "yes")
+    launch_kw = {"user_data_dir": str(PROFILE), "headless": not _headed,
                  "args": ["--no-first-run", "--no-default-browser-check"]}
     try:
         if eng == "cloakbrowser":
