@@ -12,6 +12,13 @@ from core import eye_hand as EH   # noqa: E402
 FAIL = []
 
 
+def val(d, k="p50", default=999.0):
+    """★ 取值助手：0 是合法读数（0.0ms 驱动是对的），不能写 x or 999。"""
+    v = (d or {}).get(k)
+    return default if v is None else v
+
+
+
 def check(name, ok, reading):
     print(("  ✅ " if ok else "  ❌ ") + name + " —— " + str(reading))
     if not ok:
@@ -22,10 +29,10 @@ print("== 眼手同步（射击级）验收 ==")
 fps = EH.eye_fps(1.0)
 check("眼够快（≥40fps）", (fps.get("fps") or 0) >= 40, "%s fps" % fps.get("fps"))
 r = EH.sync_benchmark(50)
-check("闭环 p50 ≤50ms（射击级）", (r["闭环ms"]["p50"] or 999) <= 50, json.dumps(r["闭环ms"], ensure_ascii=False))
-check("驱动亚毫秒级（p50 ≤2ms）", (r["驱动ms"]["p50"] or 999) <= 2, json.dumps(r["驱动ms"], ensure_ascii=False))
-check("到位率 ≥98%（手真到位）", (r["到位率"] or 0) >= 98, "%s%%" % r["到位率"])
-check("偏差 ≤2px", (r["偏差px"]["max"] or 999) <= 2, json.dumps(r["偏差px"], ensure_ascii=False))
+check("闭环 p50 ≤50ms（射击级）", val(r["闭环ms"]) <= 50, json.dumps(r["闭环ms"], ensure_ascii=False))
+check("驱动亚毫秒级（p50 ≤2ms）", val(r["驱动ms"]) <= 2, json.dumps(r["驱动ms"], ensure_ascii=False))
+check("到位率 ≥98%（手真到位）", val(r, "到位率", 0) >= 98, "%s%%" % r["到位率"])
+check("偏差 ≤2px", val(r["偏差px"], "max") <= 2, json.dumps(r["偏差px"], ensure_ascii=False))
 led = ROOT / "state" / "eye_hand.jsonl"
 check("落账", led.is_file() and led.stat().st_size > 0, "%s %s B" % (led.name, led.stat().st_size if led.is_file() else 0))
 print()
