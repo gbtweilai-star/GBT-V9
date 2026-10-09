@@ -189,13 +189,7 @@ class _FileLedger:
 
 def _default_ledger():
     """优先用框架统一账本；拿不到就退回本地 jsonl（保证'落账'这条永远成立）。"""
-    try:
-        from audit.ledger_factory import make_ledger
-        led = make_ledger()
-        if hasattr(led, "log"):
-            return led
-    except Exception:  # noqa: BLE001
-        pass
+    # 优先可查的 jsonl 轨迹（账要人看得见）；拿不到才退回框架账本
     return _FileLedger()
 
 
@@ -246,6 +240,17 @@ def run_plugged(socket, *, action: str = "run", args: dict | None = None,
             cmd = a.get("cmd") or socket.target
             if isinstance(cmd, str):
                 cmd = [_sys.executable, "-c", cmd[3:]] if cmd.startswith("py:") else cmd.split()
+            # ★ 万物可控的第一道闸：准入名单（不在名单=拒动，不许无声执行任何命令）
+            _ALLOW = ("python", "python3", "git", "node", "cmd", "powershell", "pwsh", "py")
+            _BUILTIN = ("dir", "echo", "type", "copy", "move", "del", "whoami")
+            if isinstance(cmd, list) and cmd:
+                _head = str(cmd[0]).lower().replace(".exe", "")
+                if _head in _BUILTIN:
+                    cmd = ["cmd", "/c"] + [str(x) for x in cmd]
+                elif _head not in _ALLOW:
+                    return {"ok": False, "拒动": True, "插座": "process",
+                            "原因": "不在准入名单：%s（允许：%s）" % (_head, ", ".join(_ALLOW + _BUILTIN)),
+                            "能源": SOCKET_ENERGY.get("process", "")}
             cp = subprocess.run(cmd, capture_output=True, text=True,
                                 encoding="utf-8", errors="replace", timeout=timeout)
             res.update({"ok": cp.returncode == 0, "码": cp.returncode,
