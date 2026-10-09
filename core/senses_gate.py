@@ -60,41 +60,18 @@ def mouth(text: str, *, speak: bool = False) -> dict:
 
 def require_eye(*, max_age_ms: float = DEFAULT_MAX_AGE_MS, wait_ms: float = 1200.0) -> dict:
     """**动手前必须调它**：等一次新鲜取景；取不到就返回 ok=False（调用方必须据此拒动）。"""
-    from core import vision_loop as VL
-    lp = VL.eyes("main")
-    waited, age = 0.0, None
-    while waited < wait_ms:
-        age = (lp.look() or {}).get("帧龄ms")
-        if age is not None and age <= max_age_ms:
-            return {"ok": True, "帧龄ms": age, "等了ms": waited}
-        time.sleep(0.1)
-        waited += 100.0
-    return {"ok": False, "帧龄ms": age, "等了ms": waited,
-            "判": "没有新鲜取景 ⇒ 不许动手（禁传统瞎子操作）"}
-
-
-def act(action, *, decision: dict, max_age_ms: float = DEFAULT_MAX_AGE_MS,
-        eyes_name: str = "main", expect_change: bool = True, verify: str = "screen") -> dict:
-    """**唯一的动手口**：眼→脑→手→验；缺任一步拒动。"""
-    t0 = time.time()
-    from core import vision_loop as VL
-    lp = VL.eyes(eyes_name)                       # 常驻眼（起不来就在下面判）
-    # 🔴 修：冷眼首帧可能还没到 ⇒ 等一会儿再判，不是立刻拒（否则动作永远动不了）
-    look, age, _waited = lp.look(), None, 0.0
-    while _waited < 1500:
-        look = lp.look()
-        age = look.get("帧龄ms")
-        if age is not None and age <= max_age_ms:
-            break
-        time.sleep(0.1)
-        _waited += 100.0
+    # ★ 修：眼走目击证词（按动作类型选对眼；流不新鲜就当场抓）
+    from core import eyewitness as _EW
+    _kind = str((decision or {}).get("眼", "desktop"))
+    _w = _EW.witness(_kind, max_age_ms=max_age_ms)
+    look, age = _w, _w.get("帧龄ms")
     steps = {"眼": False, "脑": False, "手": False, "验": False}
     # ① 眼
-    if age is None or age > max_age_ms:
-        steps["眼"] = False
+    if not _w.get("ok"):
         rec = {"at": time.strftime("%Y-%m-%dT%H:%M:%S"), "抓": "act", "拒动": True,
-               "在哪一步": "①眼", "读数": "帧龄 %s ms（要求 ≤ %.0f）" % (age, max_age_ms),
-               "口径": "没有新鲜取景 ⇒ 不许动手（这就是传统瞎子操作被禁的地方）"}
+               "目击证词": _w, "在哪一步": "①眼",
+               "读数": _w.get("拒动原因") or ("帧龄 %s ms" % age),
+               "口径": "没有新鲜取景 ⇒ 不许动手（按动作选对眼；抓不到才拒）"}
         _log(rec)
         return rec
     steps["眼"] = True

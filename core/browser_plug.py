@@ -92,27 +92,14 @@ def pilot(tentacle: str, action: str, **args) -> dict:
     READ_ONLY = ("read", "tabs", "shot", "eval", "back")
     if action and action.strip().lower() not in READ_ONLY:
         try:
-            from core import vision_loop as VL
-            lp = VL.eyes("main")
-            lk, age, waited = lp.look(), None, 0.0
-            while waited < 1200:
-                lk = lp.look()
-                age = lk.get("帧龄ms")
-                if age is not None and age <= 400:
-                    break
-                time.sleep(0.1)
-                waited += 100.0
-            if age is None or age > 400:
-                rec = {"ok": False, "触手": tentacle, "动作": action, "拒动": True, "在哪一步": "①眼",
-                       "读数": "帧龄 %s ms（要求 ≤400）· 等了 %.0f ms" % (age, waited),
-                       "口径": "视觉钉死：没有新鲜取景不许动手（禁传统瞎子操作）"}
-                LEDGER.parent.mkdir(parents=True, exist_ok=True)
-                with LEDGER.open("a", encoding="utf-8") as f:
-                    import json as _j
-                    f.write(_j.dumps({"at": time.strftime("%Y-%m-%dT%H:%M:%S"), "触手": tentacle,
-                                      "动作": action, "拒动": True, "眼帧龄ms": age}, ensure_ascii=False) + chr(10))
-                return rec
-            args["_眼帧龄ms"] = age
+            # ★ 修：浏览器动作要用**浏览器自己的眼**（原来拿桌面流判 ⇒ 频繁误拒）
+            from core import eyewitness as _EW
+            _eye = _EW.witness("browser")
+            if not _eye.get("ok"):
+                return {"ok": False, "触手": tentacle, "动作": action, "拒动": True,
+                        "在哪一步": "①眼", "读数": _eye.get("拒动原因") or _eye,
+                        "口径": "浏览器动作必须看到浏览器自己的一帧"}
+            age = _eye.get("帧龄ms")
         except Exception as e:  # noqa: BLE001
             return {"ok": False, "触手": tentacle, "动作": action, "拒动": True, "在哪一步": "①眼",
                     "读数": "眼睛不可用: %s" % type(e).__name__,
