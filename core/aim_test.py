@@ -11,6 +11,7 @@ from pathlib import Path
 if hasattr(sys.stdout, "reconfigure"):
     sys.stdout.reconfigure(encoding="utf-8", errors="replace")
 ROOT = Path(__file__).resolve().parent.parent
+sys.path.insert(0, str(ROOT))     # ★ 修：当脚本直接跑时（python core/aim_test.py）也能 import core
 LEDGER = ROOT / "state" / "aim_test.jsonl"
 
 RADIUS = 46
