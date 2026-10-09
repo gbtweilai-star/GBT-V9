@@ -217,10 +217,10 @@ def run_plugged(socket, *, action: str = "run", args: dict | None = None,
             cmd = a.get("cmd") or socket.target
             if isinstance(cmd, str):
                 cmd = [_sys.executable, "-c", cmd[3:]] if cmd.startswith("py:") else cmd.split()
-            cp = subprocess.run(cmd, capture_output=True, timeout=timeout)
-            res.update({"ok": cp.returncode == 0, "退出码": cp.returncode,
-                        "stdout": (cp.stdout or b"").decode("utf-8", "replace")[:400],
-                        "stderr": (cp.stderr or b"").decode("utf-8", "replace")[:200]})
+            cp = subprocess.run(cmd, capture_output=True, text=True,
+                                encoding="utf-8", errors="replace", timeout=timeout)
+            res.update({"ok": cp.returncode == 0, "码": cp.returncode,
+                        "stdout": (cp.stdout or "")[:2000], "stderr": (cp.stderr or "")[:400]})
         elif socket.kind == "model":
             # ★ 模型在**万能插肚子里的沙盒**里跑（手桥接进、输出桥接出）
             from core.pulse_sandbox import Sandbox
