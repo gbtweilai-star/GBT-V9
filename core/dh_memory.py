@@ -33,7 +33,7 @@ def collect() -> list:
     sys.path.insert(0, str(ROOT))
     units = []
     # ① 文档
-    for rel in ("docs/能力总览.md", "docs/安装与运行.md", "README.md", "CONTRIBUTING.md"):
+    for rel in ("docs/她的原生能力.md", "docs/能力总览.md", "docs/安装与运行.md", "README.md", "CONTRIBUTING.md"):
         p = ROOT / rel
         if p.is_file():
             units.append(_unit("文档", rel, p.read_text(encoding="utf-8", errors="replace")[:600], rel))

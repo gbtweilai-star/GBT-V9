@@ -92,6 +92,22 @@ async def lipsync(text: str = "", duration: float = 0.0) -> dict:
     return LS.timeline(text, duration)
 
 
+@router.get("/api/native")
+async def native_capabilities() -> dict:
+    """她的原生能力（触手 / 万能插 / 穿透扫描 / 脑子）：原文 + 现场读数。"""
+    from pathlib import Path as _P
+    doc = _P("docs/她的原生能力.md")
+    import sys as _s
+    _s.path.insert(0, ".")
+    from core import dh_memory as DM
+    from core import pulse as PU
+    return {"文档": str(doc), "原文": (doc.read_text(encoding="utf-8", errors="replace")[:4000] if doc.is_file() else "（缺）"),
+            "记忆里关于原生能力的条目": DM.search("原生能力", limit=3)["命中"],
+            "插座种类": list(getattr(PU, "SOCKET_KINDS", ())),
+            "插座能源": getattr(PU, "SOCKET_ENERGY", {}),
+            "口径": "她的原生能力 = 触手(编队) + 万能插(5 插座) + 穿透扫描(100 分片交叉复核) + 脑子(云脑+本地兜底)"}
+
+
 @router.get("/api/sider/status")
 async def sider_status(probe: bool = True) -> dict:
     """Sider 插头状态（不破坏/不绕检测；用她自己的会话）。"""

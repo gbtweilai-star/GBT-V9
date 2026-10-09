@@ -1201,6 +1201,8 @@ try:
 except Exception:
     pass
 
+from panel import native_page as _native_page   # 她的原生能力页
+app.include_router(_native_page.router)
 from panel import dh_input_page as _dh_input_page   # 数字人·输入框位
 app.include_router(_dh_input_page.router)
 from panel import fleet_live_page as _fleet_live_page   # 编队实时面板（一页看全）
