@@ -242,7 +242,7 @@ def run_plugged(socket, *, action: str = "run", args: dict | None = None,
                 cmd = [_sys.executable, "-c", cmd[3:]] if cmd.startswith("py:") else cmd.split()
             # ★ 万物可控的第一道闸：准入名单（不在名单=拒动，不许无声执行任何命令）
             _ALLOW = ("python", "python3", "git", "node", "cmd", "powershell", "pwsh", "py")
-            _BUILTIN = ("dir", "echo", "type", "copy", "move", "del", "whoami")
+            _BUILTIN = ("dir", "echo", "type", "copy", "move", "del")   # 只有真正的 cmd 内建；whoami 是 exe，必须走准入名单
             if isinstance(cmd, list) and cmd:
                 _head = str(cmd[0]).lower().replace(".exe", "")
                 if _head in _BUILTIN:
