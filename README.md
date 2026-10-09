@@ -223,3 +223,7 @@ python tools/selfcheck.py --with-acceptance  # 连七条验收一起跑
 | 听得见说得出 | `senses/voice.py`（TTS 队列/ASR/配音）+ `senses/mic.py`（VAD 切段+关键词） | `--say` enqueue ✓；VoiceStudio 不在时记 failed 不阻塞 |
 | Codex 编程工具 | `skills/native_codex.py`（沙箱 read-only/workspace-write，无绕过旗标） | 实测创建并运行 `hello.py`，输出 `V9 CLI 就绪`，rc=0 |
 | 面板三卡 | `/api/backend`（池+告警）· `/api/scale`（用量/斜率/ETA/分区）· `/api/senses`（五路感官） | 重启后面板 5 端点全 200，voice_jobs 读数为真 |
+
+## 她的原生能力
+
+触手 · 万能插 · 穿透扫描 · 脑子 —— 见 docs/她的原生能力.md。
