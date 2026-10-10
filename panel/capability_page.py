@@ -669,7 +669,11 @@ async def api_avatar_state(clip: str = "idle", t: float = 0.0, speaking: int = 0
     svg = await _asyncio.to_thread(AF.character_svg, expression=(
         "happy" if st.get("speaking") else "neutral"), talking=bool(st.get("speaking")),
         blink=float(st.get("blink") or 0.0), clip=eff, t=float(t or 0.0))
-    return {**st, "svg": svg, "关节数": len(AR.JOINTS), "形象": "角色（全身绑骨）"}
+    return {**st, "svg": svg, "关节数": len(AR.JOINTS),
+            "形象": "占位示意图（avatar_face.character_svg：代码画的 UI 占位件）",
+            "真身图": "/avatar-real.png",
+            "真身资产": "state/tripo/out3/anime_girl_3d_model.glb（42 关节 · Blender 实机渲染）",
+            "口径": "真身是 Tripo 的 3D 模型；character_svg 只做姿态示意图，不许当真身用"}
 
 
 @router.get("/api/tripo/status")
