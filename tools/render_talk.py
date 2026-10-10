@@ -45,11 +45,10 @@ def main(fps=6, clip='idle'):
         # ★ 修：用**正式角色**渲染器（原来用的是骨架可视化 ⇒ 出来是火柴人）
         svg = AF.character_svg(expression='neutral', talking=True, blink=AR.blink(t), clip=clip)
         blocks.append('<div id=f' + str(i) + ' class=f>' + svg + '</div>')
-    # ★ 修：画幅撑满（角色按高度铺满 1080x1920，水平居中）
-    css = ('<!doctype html><meta charset=utf-8><style>body{margin:0;background:#06070b;width:1080px;height:1920px;'
-           'display:flex;align-items:center;justify-content:center}.f{display:none}.f:target{display:block}'
-           'svg{height:1920px;width:auto;display:block}</style>')
-    html = css + chr(10).join(blocks)
+    # ★ 修：**一帧一个 HTML**（同一文档塞 51 份 SVG ⇒ 重复 id 会让 url(#skinG) 解析失败 ⇒ 只剩描边像剪影）
+    css = ('<!doctype html><meta charset=utf-8><style>html,body{margin:0;background:#06070b;width:1080px;height:1920px;'
+           'overflow:hidden}svg{width:1080px;height:1920px;display:block}</style>')
+    html = css
     page = OUT / 'talk-frames.html'
     page.write_text(html, encoding='utf-8')
     steps.append({'步': '逐帧形象', '帧数': n, '口型扰动': round(max(amps) - min(amps), 2)})
@@ -61,7 +60,8 @@ def main(fps=6, clip='idle'):
         pobj = (BP._BROWSER or {}).get('page')
         pobj.set_viewport_size({'width': 1080, 'height': 1920})
         for i in range(n):
-            pobj.goto(page.as_uri() + chr(35) + 'f' + str(i), wait_until='load')
+            page.write_text(html + blocks[i], encoding='utf-8')   # 每帧单独一个文档（无重复 id）
+            pobj.goto(page.as_uri(), wait_until='load')
             pobj.screenshot(path=str(fdir / ('f%04d.png' % i)))
         steps.append({'步': '渲染帧', 'ok': True, '帧目录': fdir.name})
     except Exception as e:
