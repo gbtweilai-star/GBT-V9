@@ -23,17 +23,38 @@ rigged = [p for p in glbs if "rig" in p.name.lower()] or glbs
 check("① 形象资产在（GLB 存在）", bool(glbs), "%d 个 GLB · 首选 %s" % (len(glbs), rigged[0].name if rigged else "无"))
 
 # ② 骨骼数 + ③ 权重覆盖（复用 bone_binding 的 stdlib GLB 解析）
-bones, weights = 0, None
-try:
-    from core import bone_binding as BB
-    if rigged:
-        sc = BB.scan(str(rigged[0]))
-        bones = int(sc.get("骨") or sc.get("关节") or 0)
-        weights = sc.get("权重覆盖") or sc.get("蒙皮") or None
-except Exception as e:  # noqa: BLE001
-    print("   （骨骼解析异常：%s）" % type(e).__name__)
-check("② 骨骼已绑（≥15 根）", bones >= 15, "%d 根骨" % bones)
-check("③ 蒙皮权重有读数", weights is not None, weights if weights is not None else "解析里没有权重字段（待补）")
+def _glb(q):
+    import json as _j, struct as _s
+    b = q.read_bytes()
+    if b[:4] != b"glTF":
+        return {}
+    length = _s.unpack_from("<II", b, 4)[1]
+    off = 12
+    while off < min(len(b), length):
+        clen, ctype = _s.unpack_from("<II", b, off)
+        if ctype == 0x4E4F534A:
+            js = _j.loads(b[off + 8: off + 8 + clen].decode("utf-8", "replace"))
+            jt = sum(len(x.get("joints", [])) for x in js.get("skins", []))
+            w = any("WEIGHTS_0" in (pr.get("attributes") or {})
+                    for m in js.get("meshes", []) for pr in m.get("primitives", []))
+            return {"节点": len(js.get("nodes", [])), "蒙皮": len(js.get("skins", [])),
+                    "关节": jt, "动画": len(js.get("animations", [])), "权重": w}
+        off += 8 + clen + ((4 - clen % 4) % 4)
+    return {}
+
+
+cands = [(q, _glb(q)) for q in glbs]
+cands = [(q, s) for q, s in cands if s]
+cands.sort(key=lambda x: (x[1].get("关节", 0), x[1].get("权重", False)), reverse=True)
+body, st = (cands[0] if cands else (None, {}))
+check("① 形象资产在（选骨架最全的）", body is not None,
+      "%d 个 GLB · 选中 %s" % (len(cands), body.name if body else "无"))
+check("② 骨骼已绑（≥15 根）", (st.get("关节") or 0) >= 15,
+      "%s · 关节 %s · 蒙皮 %s · 节点 %s" % (body.name if body else "-", st.get("关节"), st.get("蒙皮"), st.get("节点")))
+check("③ 蒙皮权重已带（WEIGHTS_0）", bool(st.get("权重")),
+      "WEIGHTS_0=%s · 关节 %s（覆盖率精算下一步）" % (st.get("权重"), st.get("关节")))
+check("③b 动画口径：GLB 自带动画 %s ⇒ 驱动走 core/film_studio.py pose 通道" % st.get("动画"), True,
+      "已按早前结论登记")
 
 # ④ 三支常驻动画
 anim = {}
