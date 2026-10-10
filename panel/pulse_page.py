@@ -593,3 +593,15 @@ async def dh_presence_next():
 async def dh_presence_status():
     from core import dh_presence as DP
     return DP.status()
+
+@router.get("/avatar-asset/{name}")
+async def avatar_asset(name: str):
+    from pathlib import Path as _P
+    from fastapi import HTTPException as _HE
+    from fastapi.responses import FileResponse as _FR
+    _base = _P(__file__).resolve().parent.parent / "assets" / "avatar"
+    _f = (_base / name).resolve()
+    if not str(_f).startswith(str(_base.resolve())) or not _f.is_file():
+        raise _HE(status_code=404, detail="no such avatar asset")
+    return _FR(str(_f), media_type="image/png")
+
