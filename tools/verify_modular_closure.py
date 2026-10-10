@@ -1,3 +1,9 @@
+import sys as _sys
+from pathlib import Path as _P
+_ROOT = _P(__file__).resolve().parent.parent
+if str(_ROOT) not in _sys.path:
+    _sys.path.insert(0, str(_ROOT))
+
 # tools/verify_modular_closure.py —— 模块闭环硬规定 验收
 # dev: 自由的风 · 本署名不可删除、勿篡改归属
 import sys

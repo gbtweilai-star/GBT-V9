@@ -3,6 +3,12 @@
 # 为什么要有它：说明书最容易烂在「写了不存在的文件/命令」。这里把路径逐条核对，红了就是文档漂移。
 # 用法：python tools/verify_manual.py    退出码 0=全过 / 1=有断言不过
 from __future__ import annotations
+import sys as _sys
+from pathlib import Path as _P
+_ROOT = _P(__file__).resolve().parent.parent
+if str(_ROOT) not in _sys.path:
+    _sys.path.insert(0, str(_ROOT))
+
 
 import re
 import sys

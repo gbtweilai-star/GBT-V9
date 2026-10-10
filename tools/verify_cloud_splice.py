@@ -4,6 +4,12 @@
 #       ④ 拼接总览数字自洽（可拼接+缺id+预留=100）；⑤ 凭据只报掩码；⑥ HTTP 口子真的挂在面板上。
 # 用法：python tools/verify_cloud_splice.py    退出码 0=全过 / 1=有断言不过
 from __future__ import annotations
+import sys as _sys
+from pathlib import Path as _P
+_ROOT = _P(__file__).resolve().parent.parent
+if str(_ROOT) not in _sys.path:
+    _sys.path.insert(0, str(_ROOT))
+
 
 import sys
 from pathlib import Path

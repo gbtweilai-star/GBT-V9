@@ -6,6 +6,12 @@
 #   ⑤ 板块零外链（全内置纪律）；⑥ 源码里不得出现任何自动注册/绕过风控的实现。
 # 用法：python tools/verify_cloud_terminal.py    退出码 0=全过 / 1=有断言不过
 from __future__ import annotations
+import sys as _sys
+from pathlib import Path as _P
+_ROOT = _P(__file__).resolve().parent.parent
+if str(_ROOT) not in _sys.path:
+    _sys.path.insert(0, str(_ROOT))
+
 
 import sys
 from pathlib import Path

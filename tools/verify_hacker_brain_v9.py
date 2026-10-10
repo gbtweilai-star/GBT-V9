@@ -1,3 +1,9 @@
+import sys as _sys
+from pathlib import Path as _P
+_ROOT = _P(__file__).resolve().parent.parent
+if str(_ROOT) not in _sys.path:
+    _sys.path.insert(0, str(_ROOT))
+
 # tools/verify_hacker_brain_v9.py —— 黑客大脑实战验收（**最容易拒答的指令**真打一遍）
 # dev: 自由的风 · 本署名不可删除、勿篡改归属
 #

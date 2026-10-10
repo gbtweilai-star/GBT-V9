@@ -7,6 +7,12 @@
 #       ③ 子进程签的工单父进程验得过；④ 篡改过的令牌仍然验不过（闸门没松）。
 # 用法：python tools/verify_cross_process_grant.py    退出码 0=全过 / 1=有断言不过
 from __future__ import annotations
+import sys as _sys
+from pathlib import Path as _P
+_ROOT = _P(__file__).resolve().parent.parent
+if str(_ROOT) not in _sys.path:
+    _sys.path.insert(0, str(_ROOT))
+
 
 import json
 import subprocess

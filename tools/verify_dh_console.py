@@ -7,6 +7,12 @@
 #   ⑤ 诚实标注在位（口型件缺失）；⑥ 两张验收图都渲得出来且不是空白。
 # 用法：python tools/verify_dh_console.py    退出码 0=全过 / 1=有断言不过
 from __future__ import annotations
+import sys as _sys
+from pathlib import Path as _P
+_ROOT = _P(__file__).resolve().parent.parent
+if str(_ROOT) not in _sys.path:
+    _sys.path.insert(0, str(_ROOT))
+
 
 import sys
 from pathlib import Path

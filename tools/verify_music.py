@@ -1,3 +1,9 @@
+import sys as _sys
+from pathlib import Path as _P
+_ROOT = _P(__file__).resolve().parent.parent
+if str(_ROOT) not in _sys.path:
+    _sys.path.insert(0, str(_ROOT))
+
 # tools/verify_music.py —— 配乐合格线机检（响度/真峰值/stems 三轨/BGM 时长/前 8 秒有声音）
 # dev: 自由的风 · 本署名不可删除、勿篡改归属
 # 口径来源：docs/音乐样板规格.md（A 已抓到出处；B 行业通行值标注待核对）

@@ -1,3 +1,9 @@
+import sys as _sys
+from pathlib import Path as _P
+_ROOT = _P(__file__).resolve().parent.parent
+if str(_ROOT) not in _sys.path:
+    _sys.path.insert(0, str(_ROOT))
+
 # tools/verify_fleet_live.py —— 编队实时面板 验收（一页看全 + 真动作点亮）
 # dev: 自由的风 · 本署名不可删除、勿篡改归属
 import json

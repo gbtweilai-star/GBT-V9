@@ -1,3 +1,9 @@
+import sys as _sys
+from pathlib import Path as _P
+_ROOT = _P(__file__).resolve().parent.parent
+if str(_ROOT) not in _sys.path:
+    _sys.path.insert(0, str(_ROOT))
+
 # tools/verify_brain_v9.py —— 她的脑子验收（Agnes 云脑优先 + 本地兜底如实回落 + key 不入仓）
 # dev: 自由的风 · 本署名不可删除、勿篡改归属
 import os, sys
@@ -10,6 +16,10 @@ sys.path.insert(0, str(ROOT))
 from core import brain_v9 as B   # noqa: E402
 
 FAIL = []
+
+
+# 排除验收器自身：它内部含有"要找的密钥前缀"作判据，自匹配不是泄露
+SELF = __file__
 
 
 def check(name, ok, reading):

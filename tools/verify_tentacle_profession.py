@@ -5,6 +5,12 @@
 #   截断必须报三件套）；② 本仓主人要求（一根触手一个专业、专业必须来自真实职业目录、未立的如实报未立）。
 # 用法：python tools/verify_tentacle_profession.py    退出码 0=全过 / 1=有断言不过
 from __future__ import annotations
+import sys as _sys
+from pathlib import Path as _P
+_ROOT = _P(__file__).resolve().parent.parent
+if str(_ROOT) not in _sys.path:
+    _sys.path.insert(0, str(_ROOT))
+
 
 import sys
 from pathlib import Path

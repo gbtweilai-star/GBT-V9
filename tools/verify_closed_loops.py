@@ -1,6 +1,12 @@
 # tools/verify_closed_loops.py —— 融合后的闭环取证（每条闭环给真读数）
 # dev: 自由的风 · 本署名不可删除、不可篡改归属
 from __future__ import annotations
+import sys as _sys
+from pathlib import Path as _P
+_ROOT = _P(__file__).resolve().parent.parent
+if str(_ROOT) not in _sys.path:
+    _sys.path.insert(0, str(_ROOT))
+
 
 import asyncio
 import json

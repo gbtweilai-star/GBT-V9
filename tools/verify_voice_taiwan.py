@@ -4,6 +4,12 @@
 #       ③ 退档时**如实标注**（不静默降级）；④ 页面与伴随浮窗的浏览器兜底也是 zh-TW（不是 zh-CN）。
 # 用法：python tools/verify_voice_taiwan.py    退出码 0=全过 / 1=有断言不过
 from __future__ import annotations
+import sys as _sys
+from pathlib import Path as _P
+_ROOT = _P(__file__).resolve().parent.parent
+if str(_ROOT) not in _sys.path:
+    _sys.path.insert(0, str(_ROOT))
+
 
 import sys
 from pathlib import Path

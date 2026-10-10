@@ -1,3 +1,9 @@
+import sys as _sys
+from pathlib import Path as _P
+_ROOT = _P(__file__).resolve().parent.parent
+if str(_ROOT) not in _sys.path:
+    _sys.path.insert(0, str(_ROOT))
+
 # tools/verify_vision_loop.py —— 实时视觉闭环验收（脑眼手同步·她知道有眼睛）
 # dev: 自由的风 · 本署名不可删除、勿篡改归属
 import sys
@@ -25,11 +31,11 @@ _best = None
 _tries = []
 for _i in range(3):
     time.sleep(2.0)
-    _f = lp.self_check() if (lp is not None) else None
+    _f = (locals().get('lp').self_check() if locals().get('lp') is not None else {'ok': False, '为什么': 'lp 未建'}) if (lp is not None) else None
     _tries.append(round((_f or {}).get("实测fps") or 0, 1))
     if _best is None or (_f or {}).get("实测fps", 0) > _best.get("实测fps", 0):
         _best = _f
-sc = _best or lp.self_check()
+sc = _best or (locals().get('lp').self_check() if locals().get('lp') is not None else {'ok': False, '为什么': 'lp 未建'})
 check("她知道有眼睛（self_check 报我有眼）", sc.get("我有眼") is True, sc.get("眼的形态"))
 fps = sc.get("实测fps") or 0
 check("实测帧率 ≥ 30 fps（游戏级下限）", fps >= 30, "%.1f fps（三次读数 %s，取最好；负载抖动不算故障）" % (fps, _tries))

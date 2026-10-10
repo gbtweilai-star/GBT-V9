@@ -1,3 +1,9 @@
+import sys as _sys
+from pathlib import Path as _P
+_ROOT = _P(__file__).resolve().parent.parent
+if str(_ROOT) not in _sys.path:
+    _sys.path.insert(0, str(_ROOT))
+
 # tools/verify_sider_sockets.py —— 她五面插座验收（chat/wisebase/hand 真跑 + 危险命令拒动 + 落账）
 # dev: 自由的风 · 本署名不可删除、勿篡改归属
 import sys

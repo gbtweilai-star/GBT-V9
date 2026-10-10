@@ -6,6 +6,12 @@
 #   ② 预检失败不再被永久记住 —— 过期重探，通道恢复后能自己走出来（不是假卡点）。
 # 用法：python tools/verify_no_fake_block.py    退出码 0=全过 / 1=有断言不过
 from __future__ import annotations
+import sys as _sys
+from pathlib import Path as _P
+_ROOT = _P(__file__).resolve().parent.parent
+if str(_ROOT) not in _sys.path:
+    _sys.path.insert(0, str(_ROOT))
+
 
 import sys
 import time

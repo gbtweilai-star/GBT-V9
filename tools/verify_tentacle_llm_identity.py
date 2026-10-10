@@ -6,6 +6,12 @@
 # 不跑真推理（真通道受余额/凭据限制），只验装配与隔离；这一点在输出里明说。
 # 用法：python tools/verify_tentacle_llm_identity.py    退出码 0=全过 / 1=有断言不过
 from __future__ import annotations
+import sys as _sys
+from pathlib import Path as _P
+_ROOT = _P(__file__).resolve().parent.parent
+if str(_ROOT) not in _sys.path:
+    _sys.path.insert(0, str(_ROOT))
+
 from core.swallow import swallow as _swallow
 
 import os

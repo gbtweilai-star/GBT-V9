@@ -6,6 +6,12 @@
 #      没令牌报 needs_grant，绝不假装装上；⑤ 不往 db_fleet / cloud_plugins 塞凭据字段。
 # 用法：python tools/verify_tentacle_equip.py    退出码 0=全过 / 1=有断言不过
 from __future__ import annotations
+import sys as _sys
+from pathlib import Path as _P
+_ROOT = _P(__file__).resolve().parent.parent
+if str(_ROOT) not in _sys.path:
+    _sys.path.insert(0, str(_ROOT))
+
 
 import sys
 from pathlib import Path

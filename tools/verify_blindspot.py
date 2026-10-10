@@ -8,6 +8,12 @@
 #   ④ 闸门：不盲→放行；盲且查不到→**不放行**（如实说"别硬试"）；盲但吃透→放行。
 # 用法：python tools/verify_blindspot.py    退出码 0=全过 / 1=有断言不过
 from __future__ import annotations
+import sys as _sys
+from pathlib import Path as _P
+_ROOT = _P(__file__).resolve().parent.parent
+if str(_ROOT) not in _sys.path:
+    _sys.path.insert(0, str(_ROOT))
+
 from core.swallow import swallow as _swallow
 
 import sys

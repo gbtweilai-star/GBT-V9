@@ -7,6 +7,12 @@
 #   ③ 走完整对讲链（ptt：音频→转码→听写→意图→执行→回话）能听见且给回话。
 # 用法：python tools/verify_voice_intercom.py    退出码 0=全过 / 1=有断言不过
 from __future__ import annotations
+import sys as _sys
+from pathlib import Path as _P
+_ROOT = _P(__file__).resolve().parent.parent
+if str(_ROOT) not in _sys.path:
+    _sys.path.insert(0, str(_ROOT))
+
 from core.swallow import swallow as _swallow
 
 import sys
