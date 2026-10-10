@@ -605,3 +605,64 @@ async def avatar_asset(name: str):
         raise _HE(status_code=404, detail="no such avatar asset")
     return _FR(str(_f), media_type="image/png")
 
+@router.get("/api/skills")
+async def api_skills(q: str = ""):
+    """公司技能目录（state/dsh_skills.json）：列技能 / 按关键词过滤。"""
+    import json as _j
+    from pathlib import Path as _P
+    _f = _P(__file__).resolve().parent.parent / "state" / "dsh_skills.json"
+    idx = _j.loads(_f.read_text(encoding="utf-8")) if _f.is_file() else {}
+    kw = (q or "").lower()
+    rows = [{"名": k, "描述": v.get("描述", ""), "脚本数": v.get("脚本数", 0)}
+            for k, v in sorted(idx.items())
+            if (not kw or kw in k.lower() or kw in str(v.get("描述", "")).lower())]
+    return {"共": len(idx), "命中": len(rows), "技能": rows[:80]}
+
+
+@router.get("/api/skills/show/{name}")
+async def api_skills_show(name: str):
+    import json as _j
+    from pathlib import Path as _P
+    from fastapi import HTTPException as _HE
+    _root = _P(__file__).resolve().parent.parent
+    _f = _root / "state" / "dsh_skills.json"
+    idx = _j.loads(_f.read_text(encoding="utf-8")) if _f.is_file() else {}
+    v = idx.get(name)
+    if not v:
+        raise _HE(status_code=404, detail="no such skill")
+    _md = _P(v["目录"]) / "SKILL.md"
+    head = ""
+    if _md.is_file():
+        head = chr(10).join(_md.read_text(encoding="utf-8", errors="replace").splitlines()[:60])
+    return {"名": name, "目录": v["目录"], "脚本": v.get("脚本", []), "头": head}
+
+
+@router.post("/api/skills/run")
+async def api_skills_run(payload: dict):
+    """跑公司技能自带脚本（只允许技能目录内，越权直接拒）。"""
+    import json as _j
+    import subprocess as _sp
+    import time as _t
+    from pathlib import Path as _P
+    b = payload or {}
+    name = str(b.get("技能") or "")
+    script = str(b.get("脚本") or "")
+    args = [str(x) for x in (b.get("参数") or [])]
+    _root = _P(__file__).resolve().parent.parent
+    idx = _j.loads((_root / "state" / "dsh_skills.json").read_text(encoding="utf-8"))
+    v = idx.get(name)
+    if not v:
+        return {"ok": False, "原因": "没有这个技能"}
+    base = _P(v["目录"]).resolve()
+    target = (base / script).resolve()
+    if not str(target).startswith(str(base)) or not target.is_file():
+        return {"ok": False, "拒动": True, "原因": "只允许跑该技能目录内的脚本"}
+    cmd = ([sys.executable, str(target)] if target.suffix == ".py" else [str(target)]) + args
+    p = _sp.run(cmd, capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=1800)
+    out = (p.stdout or "")[-2500:] or (p.stderr or "")[-1200:]
+    led = _root / "state" / "skills_runs.jsonl"
+    with led.open("a", encoding="utf-8") as f:
+        f.write(_j.dumps({"at": _t.strftime("%Y-%m-%dT%H:%M:%S"), "技能": name, "脚本": script, "码": p.returncode}, ensure_ascii=False) + chr(10))
+    return {"ok": p.returncode == 0, "码": p.returncode, "输出": out}
+
+
