@@ -31,7 +31,14 @@ _best = None
 _tries = []
 for _i in range(3):
     time.sleep(2.0)
-    _f = (locals().get('lp').self_check() if locals().get('lp') is not None else {'ok': False, '为什么': 'lp 未建'}) if (lp is not None) else None
+    lp = None
+try:
+    from core import vision_loop as _VL
+    lp = _VL.eyes('main')
+except Exception as _e:
+    print('（眼睛建不起来：%s）' % type(_e).__name__)
+
+_f = (locals().get('lp').self_check() if locals().get('lp') is not None else {'ok': False, '为什么': 'lp 未建'}) if (lp is not None) else None
     _tries.append(round((_f or {}).get("实测fps") or 0, 1))
     if _best is None or (_f or {}).get("实测fps", 0) > _best.get("实测fps", 0):
         _best = _f

@@ -46,7 +46,7 @@ check("坏 key 时如实回落本地（不空手、不假装）", bool(r2.get("o
 keys = ROOT / "state" / "keys.env"
 import subprocess
 # 搜**真实密钥前缀**（不是变量名；变量名会命中验收器自己）
-hit = subprocess.run("git grep -l sk-6IjZl", shell=True, capture_output=True, text=True,
+hit = subprocess.run("git grep -l " + ("sk-" + "6IjZl"), shell=True, capture_output=True, text=True,
                      encoding="utf-8", errors="replace", cwd=str(ROOT)).stdout.strip()
 check("密钥不入仓（已跟踪文件里搜不到）", hit == "", "命中文件: %s" % (hit or "无"))
 led = ROOT / "state" / "brain_v9.jsonl"
