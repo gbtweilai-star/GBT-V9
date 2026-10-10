@@ -7,13 +7,13 @@ LED = ROOT / 'state' / 'dh_presence.jsonl'
 OVERLAY_JS = r'''
 (function () {
   if (window.__dhPresence) return; window.__dhPresence = true;
-  var W = 100, H = 220, FX = 0.03, FY = 0.19;
+  var W = 170, H = 320, FX = 0.0025, FY = 0.1483;
   var wrap = document.createElement('div');
   wrap.id = 'dh-presence';
   wrap.style.cssText = 'position:fixed;z-index:2147483000;left:0;top:0;pointer-events:none;'
     + 'transition:transform .45s cubic-bezier(.2,.8,.2,1);transform:translate(-400px,-400px)';
-  wrap.innerHTML = '<img id="dh-body" src="/avatar-asset/pose-idle-front.png" '
-    + 'style="width:100px;height:220px;object-fit:contain;display:block"/>'
+  wrap.innerHTML = '<img id="dh-body" src="/avatar-asset/half-idle.png" '
+    + 'style="width:170px;height:320px;object-fit:contain;display:block"/>'
     + '<div id="dh-say" style="position:absolute;left:0;top:0;max-width:300px;background:rgba(10,14,20,.95);'
     + 'border:1px solid #2a6cb0;border-radius:10px;padding:8px 10px;color:#e6edf3;font:13px/1.6 system-ui;'
     + 'white-space:pre-wrap;opacity:0;transition:opacity .25s;transform:translateY(-105%)"></div>';
@@ -29,10 +29,10 @@ OVERLAY_JS = r'''
     var fingerX = flip ? W * (1 - FX) : W * FX;
     var x = Math.round(cx - fingerX), y = Math.round(cy - H * FY);
     x = Math.max(6, Math.min(innerWidth - W - 6, x));
-    y = Math.max(28, Math.min(innerHeight - H - 6, y));
+    y = Math.max(34, Math.min(innerHeight - H - 6, y));
     wrap.style.transform = 'translate(' + x + 'px,' + y + 'px)';
     var img = document.getElementById('dh-body');
-    var pt = (line && line.length) ? 'pose-point-front.png' : 'pose-idle-front.png';
+    var pt = (line && line.length) ? 'half-point.png' : 'half-idle.png';
     if (img.getAttribute('data-src') !== pt) { img.src = '/avatar-asset/' + pt; img.setAttribute('data-src', pt); }
     img.style.transform = flip ? 'scaleX(-1)' : 'none';
     if (line) say(line);
@@ -79,7 +79,7 @@ def next_hint():
 
 def status():
     return {'在场': '全站（ui_design.inject 每页注入）',
-            '真身': 'assets/avatar/pose-idle-front.png · pose-point-front.png',
+            '真身': 'assets/avatar/half-idle.png · half-point.png',
             '指向': '指尖对准目标中心（err 自报）'}
 
 
