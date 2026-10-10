@@ -3,7 +3,7 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
-from core import voice_kit as VK, lipsync as LS, avatar_rig as AR
+from core import voice_kit as VK, lipsync as LS, avatar_rig as AR, avatar_face as AF
 
 OUT = ROOT / 'render' / 'talk'
 LED = ROOT / 'state' / 'talk_render.jsonl'
@@ -42,11 +42,14 @@ def main(fps=6, clip='idle'):
         t = i / float(fps)
         amp = amp_at(axis, t)
         amps.append(amp)
-        st = AR.speak_state(clip, t, speaking=True, amp=amp, mood='平', blink=AR.blink(t))
-        ang = st.get('ang') or st
-        svg = AR.to_svg(ang, size=(1080, 1920), scale=1.0, blink=AR.blink(t))
+        # ★ 修：用**正式角色**渲染器（原来用的是骨架可视化 ⇒ 出来是火柴人）
+        svg = AF.character_svg(expression='neutral', talking=True, blink=AR.blink(t), clip=clip)
         blocks.append('<div id=f' + str(i) + ' class=f>' + svg + '</div>')
-    html = '<!doctype html><meta charset=utf-8><style>body{margin:0;background:#06070b}.f{display:none}.f:target{display:block}</style>' + chr(10).join(blocks)
+    # ★ 修：画幅撑满（角色按高度铺满 1080x1920，水平居中）
+    css = ('<!doctype html><meta charset=utf-8><style>body{margin:0;background:#06070b;width:1080px;height:1920px;'
+           'display:flex;align-items:center;justify-content:center}.f{display:none}.f:target{display:block}'
+           'svg{height:1920px;width:auto;display:block}</style>')
+    html = css + chr(10).join(blocks)
     page = OUT / 'talk-frames.html'
     page.write_text(html, encoding='utf-8')
     steps.append({'步': '逐帧形象', '帧数': n, '口型扰动': round(max(amps) - min(amps), 2)})
