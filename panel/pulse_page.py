@@ -568,3 +568,28 @@ async def excluded() -> dict:
     """被排除的厂商/模型登记（有日期、有理由）。"""
     from core.excluded_models import registry
     return registry()
+
+@router.get("/api/dh/overlay.js")
+async def dh_overlay_js():
+    from fastapi.responses import Response as _Resp
+    from core import dh_presence as DP
+    return _Resp(DP.OVERLAY_JS, media_type="application/javascript; charset=utf-8")
+
+
+@router.post("/api/dh/point")
+async def dh_point(payload: dict):
+    from core import dh_presence as DP
+    b = payload or {}
+    return DP.point(str(b.get("目标") or ""), str(b.get("说") or ""), page=str(b.get("页面") or ""))
+
+
+@router.get("/api/dh/presence/next")
+async def dh_presence_next():
+    from core import dh_presence as DP
+    return DP.next_hint()
+
+
+@router.get("/api/dh/presence")
+async def dh_presence_status():
+    from core import dh_presence as DP
+    return DP.status()

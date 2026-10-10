@@ -817,6 +817,9 @@ document.addEventListener('keydown',function(e){
             '</div>')
         out = (out.replace("</body>", _credit + "\n</body>", 1)
                if "</body>" in out else out + _credit)
+    if "dh/overlay.js" not in out:
+        _ov = "<script src="/api/dh/overlay.js" defer></script>"
+        out = (out.replace("</body>", _ov + chr(10) + "</body>", 1) if "</body>" in out else out + _ov)
     return out
 
 
