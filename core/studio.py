@@ -18,6 +18,7 @@ import wave
 from pathlib import Path
 
 import numpy as np
+from core.swallow import swallow as _swallow
 
 ROOT = Path(__file__).resolve().parent.parent
 STATE = ROOT / "state" / "studio"
@@ -160,7 +161,8 @@ def _font(size: int):
     for p in FONT_CANDIDATES:
         try:
             return ImageFont.truetype(p, size)
-        except Exception:  # noqa: BLE001
+        except Exception:  # noqa: BLE001 as _e_swallow
+            _swallow(__file__, _e_swallow)
             continue
     return ImageFont.load_default()
 

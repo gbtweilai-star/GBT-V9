@@ -13,6 +13,7 @@ from __future__ import annotations
 import json
 import time
 from pathlib import Path
+from core.swallow import swallow as _swallow
 
 ROOT = Path(__file__).resolve().parent.parent
 LEDGER = ROOT / "state" / "sider_sockets.jsonl"
@@ -121,7 +122,8 @@ def status() -> dict:
         for line in LEDGER.read_text(encoding="utf-8").splitlines()[-6:]:
             try:
                 rows.append(json.loads(line))
-            except Exception:  # noqa: BLE001
+            except Exception:  # noqa: BLE001 as _e_swallow
+                _swallow(__file__, _e_swallow)
                 continue
     return {"最近": rows, "插座": ["chat", "code", "hand", "create", "wisebase"],
             "能源": "我们自己的模型（万能插 model 插座：本地 ollama / 云插件）",

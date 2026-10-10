@@ -10,6 +10,7 @@ import json
 import re
 import time
 from pathlib import Path
+from core.swallow import swallow as _swallow
 
 ROOT = Path(__file__).resolve().parent.parent
 LEDGER = ROOT / "state" / "agent_loop.jsonl"
@@ -131,7 +132,8 @@ def status() -> dict:
         for line in LEDGER.read_text(encoding="utf-8").splitlines()[-8:]:
             try:
                 rows.append(json.loads(line))
-            except Exception:  # noqa: BLE001
+            except Exception:  # noqa: BLE001 as _e_swallow
+                _swallow(__file__, _e_swallow)
                 continue
     return {"工具": list(TOOLS), "最近": rows,
             "口径": "模型只出决策 JSON；执行全走她的真插座；不存在的工具如实拒动"}

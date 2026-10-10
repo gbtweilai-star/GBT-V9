@@ -22,6 +22,7 @@ import time
 import urllib.error
 import urllib.request
 from pathlib import Path
+from core.swallow import swallow as _swallow
 
 ROOT = Path(__file__).resolve().parent.parent
 CONF = ROOT / "state" / "hacker_brain_v9.json"
@@ -142,7 +143,8 @@ def status() -> dict:
         for line in LEDGER.read_text(encoding="utf-8").splitlines()[-6:]:
             try:
                 rows.append(json.loads(line))
-            except Exception:  # noqa: BLE001
+            except Exception:  # noqa: BLE001 as _e_swallow
+                _swallow(__file__, _e_swallow)
                 continue
     return {"归属": OWNER, "部署档": str(CONF.relative_to(ROOT)) if CONF.is_file() else "未部署",
             "API": API["base_url"], "默认模型": API["默认模型"],

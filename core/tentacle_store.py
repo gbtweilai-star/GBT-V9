@@ -134,7 +134,8 @@ def inbox(*, level: str = "", unread_only: bool = True, limit: int = 300, tentac
                 rows.append({"触手": t, "号": r[0], "at": r[1], "级别": r[2], "标题": r[3],
                              "正文": (r[4] or "")[:300], "已读": bool(r[5])})
             con.close()
-        except Exception:  # noqa: BLE001
+        except Exception:  # noqa: BLE001 as _e_swallow
+            _swallow(__file__, _e_swallow)
             continue
     lv_order = {l: i for i, l in enumerate(LEVELS)}
     rows.sort(key=lambda x: (-lv_order.get(x["级别"], 1), x["触手"]))
@@ -156,7 +157,8 @@ def mark_read(items: list) -> dict:
             con.commit()
             con.close()
             n += 1
-        except Exception:  # noqa: BLE001
+        except Exception:  # noqa: BLE001 as _e_swallow
+            _swallow(__file__, _e_swallow)
             continue
     return {"ok": True, "标已读": n}
 
@@ -174,7 +176,8 @@ def status() -> dict:
             unread += con.execute("SELECT count(*) FROM reports WHERE read=0").fetchone()[0]
             total_drop += con.execute("SELECT count(*) FROM drops").fetchone()[0]
             con.close()
-        except Exception:  # noqa: BLE001
+        except Exception:  # noqa: BLE001 as _e_swallow
+            _swallow(__file__, _e_swallow)
             continue
     return {"配备了": len(files), "目录": str(STORE_ROOT.relative_to(ROOT)),
             "总字节": sizes, "随手存": total_kv, "汇报": total_rep, "未读": unread, "产物登记": total_drop}

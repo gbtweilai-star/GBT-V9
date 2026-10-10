@@ -205,7 +205,8 @@ def recent(limit: int = 10) -> list:
     for line in FEED.read_text(encoding="utf-8", errors="replace").splitlines()[-limit:]:
         try:
             rows.append(json.loads(line))
-        except Exception:                                       # noqa: BLE001
+        except Exception:                                       # noqa: BLE001 as _e_swallow
+            _swallow(__file__, _e_swallow)
             continue
     return rows
 

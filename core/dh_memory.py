@@ -9,6 +9,7 @@ from __future__ import annotations
 import json
 import time
 from pathlib import Path
+from core.swallow import swallow as _swallow
 
 ROOT = Path(__file__).resolve().parent.parent
 DIR = ROOT / "state" / "dh_memory"
@@ -102,7 +103,8 @@ def ingest() -> dict:
         for line in UNITS.read_text(encoding="utf-8").splitlines():
             try:
                 old.append(json.loads(line))
-            except Exception:  # noqa: BLE001
+            except Exception:  # noqa: BLE001 as _e_swallow
+                _swallow(__file__, _e_swallow)
                 continue
     seen = {(u.get("标题"), u.get("来源")) for u in old}
     fresh = [u for u in units if (u["标题"], u["来源"]) not in seen]
@@ -122,7 +124,8 @@ def units() -> list:
     for line in UNITS.read_text(encoding="utf-8").splitlines():
         try:
             out.append(json.loads(line))
-        except Exception:  # noqa: BLE001
+        except Exception:  # noqa: BLE001 as _e_swallow
+            _swallow(__file__, _e_swallow)
             continue
     return out
 

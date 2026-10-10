@@ -149,7 +149,8 @@ def status(limit: int = 50) -> dict:
         for line in LEDGER.read_text(encoding="utf-8").splitlines()[-limit:]:
             try:
                 rows.append(json.loads(line))
-            except Exception:  # noqa: BLE001
+            except Exception:  # noqa: BLE001 as _e_swallow
+                _swallow(__file__, _e_swallow)
                 continue
     return {"条数": len(rows), "最近": rows, "护栏": list(GUARDRAILS),
             "口径": "框架不限模型 ⇒ 护栏在接手这一刻挂上；接不了必须带原因退"}

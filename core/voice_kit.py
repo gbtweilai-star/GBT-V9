@@ -9,6 +9,7 @@
 #      缺什么就如实报什么（不许假装克隆好了）
 import json, subprocess, sys, time
 from pathlib import Path
+from core.swallow import swallow as _swallow
 
 if hasattr(sys.stdout, "reconfigure"):
     sys.stdout.reconfigure(encoding="utf-8", errors="replace")
@@ -39,7 +40,8 @@ def ensure_assets() -> dict:
     if ASSETS.is_file():
         try:
             return json.loads(ASSETS.read_text(encoding="utf-8"))
-        except Exception:  # noqa: BLE001
+        except Exception:  # noqa: BLE001 as _e_swallow
+            _swallow(__file__, _e_swallow)
             pass
     d = {"默认": {"音色名": "台湾腔·女·晓臻", "edge_voice": TW_FEMALE_DEFAULT, "性别": "女", "口音": "台湾"},
          "目录": CATALOG,
@@ -98,7 +100,8 @@ def status() -> dict:
         for line in LEDGER.read_text(encoding="utf-8").splitlines()[-4:]:
             try:
                 rows.append(json.loads(line))
-            except Exception:  # noqa: BLE001
+            except Exception:  # noqa: BLE001 as _e_swallow
+                _swallow(__file__, _e_swallow)
                 continue
     return {"默认音色": a.get("默认"), "可选音色数": len(a.get("目录", {})), "角色映射": a.get("角色音色"),
             "生产规格": a.get("生产规格"), "克隆就绪": clone_readiness(), "最近": rows}

@@ -10,6 +10,7 @@
 #   · 结果如实：没起来的就说没起来 + 缺什么（不糊弄、不装扫描成功）；
 #   · 页面按 order 逐步调用 run_step(i)，边扫边说 —— 这就是"对话式操作"的开场。
 import time
+from core.swallow import swallow as _swallow
 
 STEPS = (
     ("backend", "后端与账本", "先看一下后端跟账本有没有醒过来。"),
@@ -41,7 +42,8 @@ def _panel_bases(port=None) -> list:
     for p in (port, os.environ.get("PANEL_PORT"), os.environ.get("V9_PANEL_PORT"), "8765"):
         try:
             n = int(str(p))
-        except Exception:                                      # noqa: BLE001
+        except Exception:                                      # noqa: BLE001 as _e_swallow
+            _swallow(__file__, _e_swallow)
             continue
         url = f"http://127.0.0.1:{n}"
         if url not in out:

@@ -7,6 +7,7 @@
 #   python core/aim_test.py --trials 15       # 实测：眼找绿点 → 手移动+点击 → 复抓看红 = 命中
 import argparse, json, subprocess, sys, time
 from pathlib import Path
+from core.swallow import swallow as _swallow
 
 if hasattr(sys.stdout, "reconfigure"):
     sys.stdout.reconfigure(encoding="utf-8", errors="replace")
@@ -147,7 +148,8 @@ def main() -> int:
     finally:
         try:
             tgt.terminate()
-        except Exception:  # noqa: BLE001
+        except Exception:  # noqa: BLE001 as _e_swallow
+            _swallow(__file__, _e_swallow)
             pass
     return 0
 

@@ -16,6 +16,7 @@ import struct
 import subprocess
 import time
 from pathlib import Path
+from core.swallow import swallow as _swallow
 
 ROOT = Path(__file__).resolve().parent.parent
 ROOT_ID = "v9:DH-rig"
@@ -99,7 +100,8 @@ def ensure_table(led=None) -> dict:
             try:
                 cur.execute(s)
                 ok += 1
-            except Exception:  # noqa: BLE001
+            except Exception:  # noqa: BLE001 as _e_swallow
+                _swallow(__file__, _e_swallow)
                 continue
     return {"ok": ok == len(stmts), "条": ok, "共": len(stmts)}
 
@@ -206,7 +208,8 @@ def status(limit: int = 3) -> dict:
         for line in LEDGER.read_text(encoding="utf-8").splitlines()[-limit:]:
             try:
                 rows.append(json.loads(line))
-            except Exception:  # noqa: BLE001
+            except Exception:  # noqa: BLE001 as _e_swallow
+                _swallow(__file__, _e_swallow)
                 continue
     return {"最近": rows, "覆盖": coverage(), "blender": str(BLENDER) if BLENDER.is_file() else "未找到",
             "口径": "触手绑骨法：扫空骨架 → 每根骨地址化绑触手 → 零死角；未驱动=盲区，如实列"}

@@ -16,6 +16,7 @@ import json
 import os
 import time
 from pathlib import Path
+from core.swallow import swallow as _swallow
 
 ROOT = Path(__file__).resolve().parent.parent
 LEDGER = ROOT / "state" / "browser_plug.jsonl"
@@ -73,7 +74,8 @@ def _start() -> dict:
         if eng == "cloakbrowser":
             import cloakbrowser  # noqa: F401
             launch_kw["args"] = list(launch_kw["args"]) + ["--cloakbrowser"]
-    except Exception:  # noqa: BLE001
+    except Exception:  # noqa: BLE001 as _e_swallow
+        _swallow(__file__, _e_swallow)
         pass
     ctx = pw.chromium.launch_persistent_context(**launch_kw)
     page = ctx.pages[0] if ctx.pages else ctx.new_page()
@@ -151,7 +153,8 @@ def pilot(tentacle: str, action: str, **args) -> dict:
         elif action == "close":
             try:
                 b["ctx"].close(); b["pw"].stop()
-            except Exception:  # noqa: BLE001
+            except Exception:  # noqa: BLE001 as _e_swallow
+                _swallow(__file__, _e_swallow)
                 pass
             globals()["_BROWSER"] = None
             out = {"关了": True, "历史": b["历史"][-8:]}
@@ -175,7 +178,8 @@ def status(limit: int = 5) -> dict:
         for line in LEDGER.read_text(encoding="utf-8").splitlines()[-limit:]:
             try:
                 rows.append(json.loads(line))
-            except Exception:  # noqa: BLE001
+            except Exception:  # noqa: BLE001 as _e_swallow
+                _swallow(__file__, _e_swallow)
                 continue
     return {"引擎": engine(), "常驻": _BROWSER is not None, "最近": rows,
             "动作": ["open", "read", "shot", "click", "type", "tabs", "new_tab", "back", "eval", "close"],

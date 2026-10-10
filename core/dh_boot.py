@@ -12,6 +12,7 @@ from __future__ import annotations
 import json
 import time
 from pathlib import Path
+from core.swallow import swallow as _swallow
 
 ROOT = Path(__file__).resolve().parent.parent
 LEDGER = ROOT / "state" / "dh_boot.jsonl"
@@ -96,7 +97,8 @@ def generate_welcome(*, force: bool = False) -> dict:
     if cache.is_file() and not force:
         try:
             return json.loads(cache.read_text(encoding="utf-8"))
-        except Exception:  # noqa: BLE001
+        except Exception:  # noqa: BLE001 as _e_swallow
+            _swallow(__file__, _e_swallow)
             pass
     from core import dh_memory as DM
     from core import pulse as P

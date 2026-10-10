@@ -16,6 +16,7 @@ import json
 import subprocess
 import time
 from pathlib import Path
+from core.swallow import swallow as _swallow
 
 ROOT = Path(__file__).resolve().parent.parent
 ROOT_ID = "v9:GBT小土豆V9"
@@ -92,7 +93,8 @@ def ensure_table(led=None) -> dict:
             try:
                 cur.execute(s)
                 ok += 1
-            except Exception:  # noqa: BLE001
+            except Exception:  # noqa: BLE001 as _e_swallow
+                _swallow(__file__, _e_swallow)
                 continue
     return {"ok": ok == len(stmts), "建了/已在": ok, "共": len(stmts)}
 
@@ -341,7 +343,8 @@ def status(limit: int = 3) -> dict:
         for line in LEDGER.read_text(encoding="utf-8").splitlines()[-limit:]:
             try:
                 rows.append(json.loads(line))
-            except Exception:  # noqa: BLE001
+            except Exception:  # noqa: BLE001 as _e_swallow
+                _swallow(__file__, _e_swallow)
                 continue
     return {"root_id": ROOT_ID, "最近绑定": rows, "覆盖": coverage(),
             "口径": "触手 ↔ 每一页代码 双向绑定；未绑定=盲区，报警不许『不影响运行』就放过"}

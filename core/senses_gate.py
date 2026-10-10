@@ -13,6 +13,7 @@
 import json
 import time
 from pathlib import Path
+from core.swallow import swallow as _swallow
 
 ROOT = Path(__file__).resolve().parent.parent
 LEDGER = ROOT / "state" / "senses_gate.jsonl"
@@ -157,7 +158,8 @@ def status(limit: int = 5) -> dict:
         for line in LEDGER.read_text(encoding="utf-8").splitlines()[-limit:]:
             try:
                 rows.append(json.loads(line))
-            except Exception:  # noqa: BLE001
+            except Exception:  # noqa: BLE001 as _e_swallow
+                _swallow(__file__, _e_swallow)
                 continue
     return {"最近": rows, "瞎子缝": blind_spots(), "耳": ear(),
             "口径": "眼→脑→手→验 四步闭环 + 耳/嘴；缺一步拒动；瞎子缝静态扫出来点名"}

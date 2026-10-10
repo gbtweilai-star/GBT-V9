@@ -16,6 +16,7 @@ import hashlib
 import json
 import time
 from pathlib import Path
+from core.swallow import swallow as _swallow
 
 ROOT = Path(__file__).resolve().parent.parent
 LEDGER = ROOT / "state" / "tentacle_provision.jsonl"
@@ -91,7 +92,8 @@ def status() -> dict:
         for line in LEDGER.read_text(encoding="utf-8").splitlines()[-5:]:
             try:
                 rows.append(json.loads(line))
-            except Exception:  # noqa: BLE001
+            except Exception:  # noqa: BLE001 as _e_swallow
+                _swallow(__file__, _e_swallow)
                 continue
     return {"在岗触手": 100, "地址空间": 10 ** 8, "已有配置（按账本现算）": have,
             "共享验证平台": SIM_PLATFORM, "云插件": PLUGIN,

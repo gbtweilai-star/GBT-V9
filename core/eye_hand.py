@@ -8,6 +8,7 @@
 #   · 验：动作后再抓一帧，像素有变化才算"打中"（不许瞎报命中）
 import ctypes, json, time
 from pathlib import Path
+from core.swallow import swallow as _swallow
 
 if hasattr(__import__("sys").stdout, "reconfigure"):
     __import__("sys").stdout.reconfigure(encoding="utf-8", errors="replace")
@@ -147,7 +148,8 @@ def status() -> dict:
         for line in LEDGER.read_text(encoding="utf-8").splitlines()[-3:]:
             try:
                 rows.append(json.loads(line))
-            except Exception:  # noqa: BLE001
+            except Exception:  # noqa: BLE001 as _e_swallow
+                _swallow(__file__, _e_swallow)
                 continue
     return {"最近基准": rows, "口径": "真抓帧·真驱动·真复核；不许瞎报命中"}
 

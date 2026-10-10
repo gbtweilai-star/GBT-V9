@@ -151,7 +151,8 @@ def reclaim(idle_days: float = 0.0, *, limit: int = 500) -> dict:
                 done += 1
             c.commit()
             c.close()
-        except Exception:  # noqa: BLE001
+        except Exception:  # noqa: BLE001 as _e_swallow
+            _swallow(__file__, _e_swallow)
             continue
     return {"ok": True, "回收": done, "口径": "退回逻辑态（随身库可另行清理，可回滚）"}
 
@@ -165,7 +166,8 @@ def stats() -> dict:
             logical += c.execute("SELECT count(*) FROM tentacle").fetchone()[0]
             materialized += c.execute("SELECT count(*) FROM tentacle WHERE state='已实体化'").fetchone()[0]
             c.close()
-        except Exception:  # noqa: BLE001
+        except Exception:  # noqa: BLE001 as _e_swallow
+            _swallow(__file__, _e_swallow)
             continue
     bytes_ = sum(p.stat().st_size for p in files) + (MASTER_FILE.stat().st_size if MASTER_FILE.is_file() else 0)
     return {"逻辑触手": logical, "已实体化": materialized, "分片文件": len(files),

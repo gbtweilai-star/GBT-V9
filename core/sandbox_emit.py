@@ -298,7 +298,8 @@ def run(op: str = "status", **kw) -> dict:
             for line in SPIT_LEDGER.read_text(encoding="utf-8").splitlines()[-50:]:
                 try:
                     rows.append(json.loads(line))
-                except Exception:  # noqa: BLE001
+                except Exception:  # noqa: BLE001 as _e_swallow
+                    _swallow(__file__, _e_swallow)
                     continue
         return {"牢房数": len(list(CELLS.glob("cell-*"))) if CELLS.is_dir() else 0, "最近": rows,
                 "口径": "关得住（四查）· 只有触手能吐（封印校验）"}

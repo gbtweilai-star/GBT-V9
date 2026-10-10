@@ -109,7 +109,8 @@ def status(limit: int = 30) -> dict:
         for line in LEDGER.read_text(encoding="utf-8").splitlines()[-limit:]:
             try:
                 rows.append(json.loads(line))
-            except Exception:  # noqa: BLE001
+            except Exception:  # noqa: BLE001 as _e_swallow
+                _swallow(__file__, _e_swallow)
                 continue
     return {"条数": len(rows), "最近": rows, "候选池": candidates(),
             "口径": "原样指令 · 沙盒内火力全开 · 只从触手吐；护栏在容器上（凭据不进/无网/四查/六类现实动作仍要授权）"}

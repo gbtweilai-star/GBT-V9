@@ -51,7 +51,8 @@ def _rows() -> list:
             continue
         try:
             out.append(json.loads(line))
-        except Exception:                                      # noqa: BLE001
+        except Exception:                                      # noqa: BLE001 as _e_swallow
+            _swallow(__file__, _e_swallow)
             continue
     return out
 

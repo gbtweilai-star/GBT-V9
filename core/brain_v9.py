@@ -11,6 +11,7 @@ import time
 import urllib.error
 import urllib.request
 from pathlib import Path
+from core.swallow import swallow as _swallow
 
 ROOT = Path(__file__).resolve().parent.parent
 KEYS = ROOT / "state" / "keys.env"
@@ -97,7 +98,8 @@ def status() -> dict:
         for line in LEDGER.read_text(encoding="utf-8").splitlines()[-5:]:
             try:
                 rows.append(json.loads(line))
-            except Exception:  # noqa: BLE001
+            except Exception:  # noqa: BLE001 as _e_swallow
+                _swallow(__file__, _e_swallow)
                 continue
     return {"Agnes": {"配了": bool(e.get("AGNES_API_KEY")), "模型": e.get("AGNES_MODEL"),
                       "入口": e.get("AGNES_API_BASE")},

@@ -9,6 +9,7 @@ from __future__ import annotations
 import json
 import time
 from pathlib import Path
+from core.swallow import swallow as _swallow
 
 ROOT = Path(__file__).resolve().parent.parent
 LEDGER = ROOT / "state" / "dh_teach.jsonl"
@@ -74,7 +75,8 @@ def next_step(*, mark: bool = False) -> dict:
                 rec = json.loads(line)
                 if rec.get("动作") == "done":
                     done.add(rec.get("步"))
-            except Exception:  # noqa: BLE001
+            except Exception:  # noqa: BLE001 as _e_swallow
+                _swallow(__file__, _e_swallow)
                 continue
     for s in plan():
         if s["步"] not in done:

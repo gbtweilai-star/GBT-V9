@@ -16,6 +16,7 @@ import subprocess
 import sys
 import time
 from pathlib import Path
+from core.swallow import swallow as _swallow
 
 ROOT = Path(__file__).resolve().parent.parent
 LEDGER = ROOT / "state" / "delivery_gate.jsonl"
@@ -111,7 +112,8 @@ def status(limit: int = 3) -> dict:
         for line in LEDGER.read_text(encoding="utf-8").splitlines()[-limit:]:
             try:
                 rows.append(json.loads(line))
-            except Exception:  # noqa: BLE001
+            except Exception:  # noqa: BLE001 as _e_swallow
+                _swallow(__file__, _e_swallow)
                 continue
     return {"登记能力数": len(CAPABILITIES), "最近": rows,
             "口径": "每个能力一条独立验收器；缺验收器=没闭环=禁止交付"}

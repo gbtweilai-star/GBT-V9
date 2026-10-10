@@ -10,6 +10,7 @@
 import json
 import time
 from pathlib import Path
+from core.swallow import swallow as _swallow
 
 ROOT = Path(__file__).resolve().parent.parent
 PROFILE = ROOT / "state" / "browser_own_profile"      # 她自己的浏览器数据目录
@@ -120,7 +121,8 @@ class NativeBrowser:
                 self.ctx.close()
             if self._pw:
                 self._pw.stop()
-        except Exception:  # noqa: BLE001
+        except Exception:  # noqa: BLE001 as _e_swallow
+            _swallow(__file__, _e_swallow)
             pass
         return {"ok": True, "历史": self.history[-10:]}
 
