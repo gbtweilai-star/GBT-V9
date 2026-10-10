@@ -27,22 +27,21 @@ def check(name, ok, reading):
 
 print("== 实时视觉闭环验收（脑·眼·手）==")
 # 🔴 修判据：批量跑时别的验收器会抢资源，帧率瞬时会掉到 30 以下 ⇒ 取多次最好值，并记下各次读数
-_best = None
-_tries = []
-for _i in range(3):
-    time.sleep(2.0)
-    lp = None
+lp = None
 try:
     from core import vision_loop as _VL
     lp = _VL.eyes('main')
 except Exception as _e:
     print('（眼睛建不起来：%s）' % type(_e).__name__)
 
-_f = (locals().get('lp').self_check() if locals().get('lp') is not None else {'ok': False, '为什么': 'lp 未建'}) if (lp is not None) else None
+_best = None
+_tries = []
+for _i in range(3):
+    _f = (lp.self_check() if lp is not None else {'ok': False, '为什么': 'lp 未建'})
     _tries.append(round((_f or {}).get("实测fps") or 0, 1))
     if _best is None or (_f or {}).get("实测fps", 0) > _best.get("实测fps", 0):
         _best = _f
-sc = _best or (locals().get('lp').self_check() if locals().get('lp') is not None else {'ok': False, '为什么': 'lp 未建'})
+sc = _best or (lp.self_check() if lp is not None else {'ok': False, '为什么': 'lp 未建'})
 check("她知道有眼睛（self_check 报我有眼）", sc.get("我有眼") is True, sc.get("眼的形态"))
 fps = sc.get("实测fps") or 0
 check("实测帧率 ≥ 30 fps（游戏级下限）", fps >= 30, "%.1f fps（三次读数 %s，取最好；负载抖动不算故障）" % (fps, _tries))
